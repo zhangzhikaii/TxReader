@@ -37,9 +37,13 @@
 </head>
 <body>
 <main>
-  <h1>TxReader · 微信截图记账</h1>
+  <h1>TxReader · 截图记账</h1>
 
   <div class="card settings">
+    <label>来源<select id="source">
+      <option value="wechat">微信 · 零钱明细</option>
+      <option value="boc">中国银行 · 交易明细</option>
+    </select></label>
     <label>账户<input id="account" value="微信"></label>
     <label>币种<input id="currency" value="人民币"></label>
     <label>默认种类<input id="category" value="饮食费"></label>
@@ -51,7 +55,7 @@
   </div>
 
   <div class="card">
-    <div id="drop">点击或拖拽微信「零钱明细」截图到这里（可多张）</div>
+    <div id="drop"></div>
     <input id="file" type="file" accept="image/*" multiple hidden>
     <div class="bar"><span id="status"></span></div>
   </div>
@@ -73,15 +77,39 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const SETTINGS = ["account", "currency", "category", "year", "order"];
+const SOURCES = {
+  wechat: { hint: "点击或拖拽微信「零钱明细」列表截图到这里（可多张）",
+            defaults: { account: "微信", currency: "人民币", category: "饮食费" } },
+  boc:    { hint: "点击或拖拽中国银行单笔交易的「明细」页截图到这里（每张一笔，可多张）",
+            defaults: { account: "中行", currency: "人民币", category: "饮食费" } },
+};
+const GLOBAL_SETTINGS = ["source", "year", "order"];
+const SOURCE_SETTINGS = ["account", "currency", "category"]; // remembered separately per source
 let records = [];
 
-// Remember defaults between visits
-for (const k of SETTINGS) {
-  try { const v = localStorage.getItem("tx." + k); if (v) $(k).value = v; } catch {}
-  $(k).addEventListener("change", () => { try { localStorage.setItem("tx." + k, $(k).value); } catch {} });
+const load = k => { try { return localStorage.getItem(k); } catch { return null; } };
+const save = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+
+for (const k of GLOBAL_SETTINGS) {
+  const v = load("tx." + k);
+  if (v) $(k).value = v;
+  $(k).addEventListener("change", () => save("tx." + k, $(k).value));
 }
 if (!$("year").value) $("year").value = new Date().getFullYear();
+
+function applySource() {
+  const src = $("source").value;
+  for (const k of SOURCE_SETTINGS) {
+    // "tx.<k>" is the pre-multi-source key, kept so existing WeChat settings carry over
+    $(k).value = load(`tx.${src}.${k}`) ?? (src === "wechat" ? load("tx." + k) : null) ?? SOURCES[src].defaults[k];
+  }
+  $("drop").textContent = SOURCES[src].hint;
+}
+for (const k of SOURCE_SETTINGS) {
+  $(k).addEventListener("change", () => save(`tx.${$("source").value}.${k}`, $(k).value));
+}
+$("source").addEventListener("change", applySource);
+applySource();
 
 function sortRecords() {
   const dir = $("order").value === "desc" ? -1 : 1;
@@ -101,6 +129,7 @@ async function upload(files) {
   const fd = new FormData();
   for (const f of files) fd.append("files", f);
   fd.append("year", $("year").value);
+  fd.append("source", $("source").value);
   $("status").textContent = `识别中（${files.length} 张）…`;
   try {
     const res = await fetch("/api/parse", { method: "POST", body: fd });
@@ -110,7 +139,7 @@ async function upload(files) {
       ...r, account: $("account").value, currency: $("currency").value, category: $("category").value,
     }));
     // Skip rows already in the table from an earlier upload
-    const key = r => `${r.date}|${r.amount}|${r.merchant}`;
+    const key = r => `${r.date}|${r.amount}|${r.merchant}|${r.balance}`;
     const have = new Set(records.map(key));
     const added = fresh.filter(r => !have.has(key(r)));
     records = records.concat(added);

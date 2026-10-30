@@ -6,29 +6,17 @@ Each entry on screen looks like:
 Month headers like "2026年10月" give the year.
 """
 import re
-from dataclasses import dataclass
-from datetime import date
 
 import numpy as np
 
-from .ocr import Box, run_ocr
+from ..models import Tx
+from ..ocr import Box
 
 DATE_RE = re.compile(r"(\d{1,2})月(\d{1,2})日\s*(\d{1,2})[:：](\d{2})")
 HEADER_RE = re.compile(r"(20\d{2})年(\d{1,2})月")
 # OCR sometimes reads the minus sign as a dash or the Chinese character 一
 AMOUNT_RE = re.compile(r"^([+\-−–—一]?)\s*¥?\s*(\d[\d,]*\.\d{2})$")
-
-
-@dataclass
-class Tx:
-    year: int | None   # None when no month header was visible
-    month: int
-    day: int
-    hour: int
-    minute: int
-    amount: float      # negative = expense, positive = income
-    merchant: str
-    sign_guessed: bool = False  # True if the +/- sign was inferred from colour
+BALANCE_RE = re.compile(r"余额\s*([\d,]+\.\d{2})")
 
 
 def _is_income_colour(img: np.ndarray, b: Box) -> bool:
@@ -45,7 +33,7 @@ def _is_income_colour(img: np.ndarray, b: Box) -> bool:
     return bgr[2] - bgr[0] > 60  # red channel much higher than blue -> orange
 
 
-def parse_boxes(boxes: list[Box], img: np.ndarray | None = None) -> list[Tx]:
+def parse_boxes(boxes: list[Box], img: np.ndarray | None = None) -> tuple[list[Tx], list[str]]:
     headers = []
     for b in boxes:
         m = HEADER_RE.search(b.text)
@@ -91,22 +79,12 @@ def parse_boxes(boxes: list[Box], img: np.ndarray | None = None) -> list[Tx]:
             _, hy, hm = max(hs, key=lambda h: h[0])
             year = hy if hm == month else None
 
-        txs.append(Tx(year, month, day, hour, minute, value,
-                      title.text, guessed))
-    return txs
+        bal = [b for b in boxes if abs(b.cy - d.cy) < line_h * 0.6
+               and BALANCE_RE.search(b.text.replace(" ", ""))]
+        balance = (float(BALANCE_RE.search(bal[0].text.replace(" ", "")).group(1).replace(",", ""))
+                   if bal else None)
 
-
-def parse_image(img: np.ndarray) -> list[Tx]:
-    return parse_boxes(run_ocr(img), img)
-
-
-def resolve_year(tx: Tx, default_year: int, today: date | None = None) -> int:
-    """Pick a year when the screenshot didn't show one: use the default,
-    but step back a year if that would put the transaction in the future."""
-    if tx.year:
-        return tx.year
-    today = today or date.today()
-    y = default_year
-    if y == today.year and (tx.month, tx.day) > (today.month, today.day):
-        y -= 1
-    return y
+        txs.append(Tx(month=month, day=day, amount=value, merchant=title.text,
+                      year=year, hour=hour, minute=minute, balance=balance,
+                      sign_guessed=guessed))
+    return txs, []
