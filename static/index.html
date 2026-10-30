@@ -10,7 +10,32 @@
   * { box-sizing:border-box; }
   body { margin:0; font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
          background:var(--bg); color:var(--text); }
-  main { max-width:1000px; margin:0 auto; padding:24px 16px; }
+  .layout { display:flex; align-items:flex-start; }
+  main { flex:1; min-width:0; max-width:1000px; margin:0 auto; padding:24px 16px; }
+  /* Screenshot viewer: a column pinned to the right edge, as wide as the screenshot shown at full
+     height (capped so the table keeps its room). The page content stays centred in the space left. */
+  #viewer { display:none; flex:0 0 auto; position:sticky; top:0; height:100vh;
+            overflow-y:auto; background:var(--card); border-left:1px solid var(--line); padding:0 12px 12px; }
+  body.viewing #viewer { display:block; }
+  /* width:0 + min-width:100%: a long file name must not widen the panel beyond the image */
+  .viewer-bar { width:0; min-width:100%; position:sticky; top:0; display:flex; justify-content:space-between; align-items:center; gap:8px;
+                padding:12px 0 8px; background:var(--card); font-size:13px; color:var(--muted); }
+  .viewer-bar span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* Whole screenshot fits the window height (aspect ratio kept by the max-* limits) */
+  #viewer-img { display:block; max-height:calc(100vh - 72px); width:auto; height:auto; max-width:min(32vw, 480px);
+                margin:0 auto; border-radius:8px; border:1px solid var(--line); }
+  .thumbs { display:flex; flex-wrap:wrap; gap:8px; }
+  .thumbs:not(:empty) { margin-top:12px; }
+  .thumbs button { width:64px; height:112px; padding:0; background:none; border:2px solid var(--line);
+                   border-radius:6px; overflow:hidden; }
+  .thumbs button:hover { border-color:var(--muted); }
+  .thumbs button.active { border-color:var(--accent); }
+  .thumbs img { display:block; width:100%; height:100%; object-fit:cover; object-position:top; }
+  /* Narrow screens: no room for two columns, so the viewer covers the page */
+  @media (max-width:800px) {
+    body.viewing #viewer { position:fixed; inset:0; height:auto; width:auto; z-index:10; border:0; }
+    #viewer-img { max-width:100%; }
+  }
   h1 { font-size:22px; margin:0 0 16px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
   .settings { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
@@ -25,10 +50,14 @@
   #status { color:var(--muted); font-size:14px; }
   .table-wrap { overflow-x:auto; }
   table { border-collapse:collapse; width:100%; font-size:14px; }
-  th, td { border-bottom:1px solid var(--line); padding:6px; text-align:left; white-space:nowrap; }
-  td input { width:100%; min-width:80px; padding:4px 6px; }
-  td.amt input { text-align:right; width:120px; font-variant-numeric:tabular-nums; }
-  td.date input { width:170px; font-variant-numeric:tabular-nums; }
+  th, td { border-bottom:1px solid var(--line); padding:6px 4px; text-align:left; white-space:nowrap; }
+  /* Column widths sized so the table fits without sideways scrolling, also with the viewer open */
+  td input { width:100%; min-width:72px; padding:4px 6px; }
+  td.amt input { text-align:right; width:100px; font-variant-numeric:tabular-nums; }
+  td.date input { width:160px; padding:4px; font-variant-numeric:tabular-nums; }
+  td input[data-k="currency"] { width:60px; min-width:60px; }
+  td input[data-k="merchant"] { min-width:180px; }
+  td button { padding:4px 10px; }
   td input.guess { border-color:#f59e0b; background:#fffbeb; }
   td input.invalid { border-color:#dc2626; background:#fef2f2; }
   tr.income { background:var(--income); }
@@ -39,6 +68,7 @@
 </style>
 </head>
 <body>
+<div class="layout">
 <main>
   <h1>TxReader · 截图记账</h1>
 
@@ -62,6 +92,7 @@
   <div class="card">
     <div id="drop"></div>
     <input id="file" type="file" accept="image/*" multiple hidden>
+    <div id="thumbs" class="thumbs"></div>
     <div class="bar"><span id="status"></span></div>
   </div>
 
@@ -80,6 +111,12 @@
   </div>
 </main>
 
+<aside id="viewer" aria-label="截图预览">
+  <div class="viewer-bar"><span id="viewer-name"></span><button id="viewer-close" class="secondary">关闭</button></div>
+  <img id="viewer-img" alt="">
+</aside>
+</div>
+
 <script>
 const $ = id => document.getElementById(id);
 const SOURCES = {
@@ -96,6 +133,9 @@ const GLOBAL_SETTINGS = ["source", "year", "order"];
 const SOURCE_SETTINGS = ["account", "currency", "category"]; // remembered separately per source
 let records = [];
 let nextId = 1; // stable row id, so focus survives re-sorting
+let images = [];   // uploaded screenshots: { id, name, url }
+let nextImgId = 1;
+let viewing = null; // id of the screenshot shown in the viewer
 
 const load = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const save = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
@@ -137,7 +177,11 @@ $("file").onchange = e => { upload(e.target.files); e.target.value = ""; };
 async function upload(files) {
   if (!files.length) return;
   const fd = new FormData();
-  for (const f of files) fd.append("files", f);
+  for (const f of files) {
+    fd.append("files", f);
+    images.push({ id: nextImgId++, name: f.name, url: URL.createObjectURL(f) });
+  }
+  renderThumbs();
   fd.append("year", $("year").value);
   fd.append("source", $("source").value);
   $("status").textContent = `识别中（${files.length} 张）…`;
@@ -244,7 +288,39 @@ $("rows").addEventListener("click", e => {
   const id = e.target.dataset.del;
   if (id !== undefined) { records = records.filter(r => r.id !== +id); render(); }
 });
-$("clear").onclick = () => { records = []; $("status").textContent = ""; render(); };
+$("clear").onclick = () => {
+  records = [];
+  for (const im of images) URL.revokeObjectURL(im.url);
+  images = [];
+  showImage(null);
+  $("status").textContent = "";
+  render();
+};
+
+// Uploaded screenshots: thumbnails under the drop zone, click to view on the right
+function renderThumbs() {
+  $("thumbs").innerHTML = images.map(im =>
+    `<button data-img="${im.id}" class="${im.id === viewing ? "active" : ""}" title="${esc(im.name)}">` +
+    `<img src="${im.url}" alt="${esc(im.name)}"></button>`).join("");
+}
+function showImage(id) {
+  const im = images.find(i => i.id === id);
+  viewing = im ? id : null;
+  document.body.classList.toggle("viewing", !!im);
+  if (im) {
+    $("viewer-img").src = im.url;
+    $("viewer-img").alt = im.name;
+    $("viewer-name").textContent = im.name;
+    $("viewer").scrollTop = 0;
+  }
+  renderThumbs();
+}
+$("thumbs").addEventListener("click", e => {
+  const id = +e.target.closest("[data-img]")?.dataset.img;
+  if (id) showImage(id === viewing ? null : id); // clicking the open one closes it
+});
+$("viewer-close").onclick = () => showImage(null);
+document.addEventListener("keydown", e => { if (e.key === "Escape" && viewing) showImage(null); });
 
 $("export").onclick = () => {
   const cell = v => /[",\n]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : v;
