@@ -26,11 +26,15 @@
                 margin:0 auto; border-radius:8px; border:1px solid var(--line); }
   .thumbs { display:flex; flex-wrap:wrap; gap:8px; }
   .thumbs:not(:empty) { margin-top:12px; }
-  .thumbs button { width:64px; height:112px; padding:0; background:none; border:2px solid var(--line);
-                   border-radius:6px; overflow:hidden; }
-  .thumbs button:hover { border-color:var(--muted); }
-  .thumbs button.active { border-color:var(--accent); }
-  .thumbs img { display:block; width:100%; height:100%; object-fit:cover; object-position:top; }
+  .thumb { position:relative; }
+  .thumb-open { display:block; width:64px; height:112px; padding:0; background:none; border:2px solid var(--line);
+                border-radius:6px; overflow:hidden; }
+  .thumb-open:hover { border-color:var(--muted); }
+  .thumb-open.active { border-color:var(--accent); }
+  .thumb-open img { display:block; width:100%; height:100%; object-fit:cover; object-position:top; }
+  .thumb-del { position:absolute; top:-6px; right:-6px; width:20px; height:20px; padding:0; border-radius:50%;
+               background:#6b7280; color:#fff; font-size:13px; line-height:20px; text-align:center; }
+  .thumb-del:hover { background:#dc2626; }
   /* Narrow screens: no room for two columns, so the viewer covers the page */
   @media (max-width:800px) {
     body.viewing #viewer { position:fixed; inset:0; height:auto; width:auto; z-index:10; border:0; }
@@ -136,6 +140,7 @@ let nextId = 1; // stable row id, so focus survives re-sorting
 let images = [];   // uploaded screenshots: { id, name, url }
 let nextImgId = 1;
 let viewing = null; // id of the screenshot shown in the viewer
+let session = 0;    // bumped on clear / source switch, so results of uploads still in flight are dropped
 
 const load = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const save = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
@@ -158,7 +163,8 @@ function applySource() {
 for (const k of SOURCE_SETTINGS) {
   $(k).addEventListener("change", () => save(`tx.${$("source").value}.${k}`, $(k).value));
 }
-$("source").addEventListener("change", applySource);
+// Rows and screenshots of one source don't belong with another's, so start over on switch
+$("source").addEventListener("change", () => { clearAll(); applySource(); });
 applySource();
 
 function sortRecords() {
@@ -185,9 +191,11 @@ async function upload(files) {
   fd.append("year", $("year").value);
   fd.append("source", $("source").value);
   $("status").textContent = `识别中（${files.length} 张）…`;
+  const mySession = session;
   try {
     const res = await fetch("/api/parse", { method: "POST", body: fd });
     const data = await res.json();
+    if (mySession !== session) return; // cleared or source switched while recognizing
     if (!res.ok) throw new Error(data.detail || res.statusText);
     const fresh = data.records.map(r => ({
       ...r, account: $("account").value, currency: $("currency").value, category: $("category").value,
@@ -202,6 +210,7 @@ async function upload(files) {
       (data.errors.length ? `；失败：${data.errors.join("；")}` : "");
     render();
   } catch (e) {
+    if (mySession !== session) return;
     $("status").textContent = "出错了：" + e.message;
   }
 }
@@ -288,20 +297,34 @@ $("rows").addEventListener("click", e => {
   const id = e.target.dataset.del;
   if (id !== undefined) { records = records.filter(r => r.id !== +id); render(); }
 });
-$("clear").onclick = () => {
+function clearAll() {
+  session++;
   records = [];
   for (const im of images) URL.revokeObjectURL(im.url);
   images = [];
   showImage(null);
   $("status").textContent = "";
   render();
-};
+}
+$("clear").onclick = clearAll;
 
 // Uploaded screenshots: thumbnails under the drop zone, click to view on the right
 function renderThumbs() {
   $("thumbs").innerHTML = images.map(im =>
-    `<button data-img="${im.id}" class="${im.id === viewing ? "active" : ""}" title="${esc(im.name)}">` +
-    `<img src="${im.url}" alt="${esc(im.name)}"></button>`).join("");
+    `<div class="thumb">` +
+    `<button class="thumb-open ${im.id === viewing ? "active" : ""}" data-img="${im.id}" title="${esc(im.name)}">` +
+    `<img src="${im.url}" alt="${esc(im.name)}"></button>` +
+    `<button class="thumb-del" data-img-del="${im.id}" title="删除这张截图（已识别的记录保留）" aria-label="删除截图">×</button>` +
+    `</div>`).join("");
+}
+// Removes only the screenshot; rows already recognized from it stay in the table
+function removeImage(id) {
+  const im = images.find(i => i.id === id);
+  if (!im) return;
+  URL.revokeObjectURL(im.url);
+  images = images.filter(i => i !== im);
+  if (viewing === id) showImage(null);
+  else renderThumbs();
 }
 function showImage(id) {
   const im = images.find(i => i.id === id);
@@ -316,6 +339,8 @@ function showImage(id) {
   renderThumbs();
 }
 $("thumbs").addEventListener("click", e => {
+  const del = +e.target.closest("[data-img-del]")?.dataset.imgDel;
+  if (del) return removeImage(del);
   const id = +e.target.closest("[data-img]")?.dataset.img;
   if (id) showImage(id === viewing ? null : id); // clicking the open one closes it
 });
