@@ -32,6 +32,12 @@ def _rows(records):
     return [[r["date"], r["weekday"], r["amount"], r["merchant"]] for r in records]
 
 
+def _by_date(rows):
+    """Expected files may list rows in any order (e.g. newest first, as on screen),
+    and rows with identical timestamps have no meaningful order, so compare sorted."""
+    return sorted(rows, key=lambda r: (r[0], r[3], float(r[2])))
+
+
 def _load(case):
     source = case.parent.name.lower()
     img = decode_image(_image_for(case).read_bytes())
@@ -49,11 +55,11 @@ def test_sample(case):
     source, img, expected, year = _load(case)
     txs, warnings = parse_image(img, source)
     assert warnings == []
-    assert _rows(build_records([txs], year)) == expected
+    assert _by_date(_rows(build_records([txs], year))) == _by_date(expected)
 
 
 # Sources whose screenshots are scrolling lists (BOC uses one detail page per transaction)
-LIST_SOURCES = {"wechat"}
+LIST_SOURCES = {"wechat", "icbc"}
 
 
 @pytest.mark.parametrize("case", [c for c in CASES if c.parent.name.lower() in LIST_SOURCES],
@@ -64,4 +70,4 @@ def test_overlapping_halves_are_deduplicated(case):
     h = img.shape[0]
     top, _ = parse_image(img[: int(h * 0.65)], source)
     bottom, _ = parse_image(img[int(h * 0.35):], source)
-    assert _rows(build_records([top, bottom], year)) == expected
+    assert _by_date(_rows(build_records([top, bottom], year))) == _by_date(expected)

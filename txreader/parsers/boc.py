@@ -20,17 +20,6 @@ AMOUNT_LABEL_RE = re.compile(r"(支出|收入)金额")
 AMOUNT_RE = re.compile(r"^[+\-]?(\d[\d,]*\.\d{2})$")
 DATETIME_RE = re.compile(r"(20\d{2})[/\-.](\d{1,2})[/\-.](\d{1,2})\s*(\d{1,2})[:：](\d{2})(?:[:：](\d{2}))?")
 MONEY_RE = re.compile(r"(\d[\d,]*\.\d{2})")
-# Payment-channel prefixes that aren't part of the merchant name
-CHANNEL_PREFIXES = ("财付通-", "支付宝-")
-
-
-def _clean_merchant(text: str) -> str:
-    text = text.strip()
-    for p in CHANNEL_PREFIXES:
-        if text.startswith(p) and len(text) > len(p):
-            return text[len(p):]
-    return text
-
 
 def _value_of(boxes: list[Box], label: str) -> str | None:
     """Text to the right of the first box whose text starts with `label`."""
@@ -74,6 +63,6 @@ def parse_boxes(boxes: list[Box], img: np.ndarray | None = None) -> tuple[list[T
     if (text := _value_of(boxes, "交易后余")) and (m := MONEY_RE.search(text)):
         balance = float(m.group(1).replace(",", ""))
 
-    return [Tx(month=month, day=day, amount=value, merchant=_clean_merchant(merchant),
+    return [Tx(month=month, day=day, amount=value, merchant=merchant.strip(),
                year=year, hour=hour, minute=minute, second=second,
                balance=balance)], []

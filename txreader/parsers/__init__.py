@@ -3,11 +3,12 @@ import numpy as np
 
 from ..models import Tx
 from ..ocr import run_ocr
-from . import boc, wechat
+from . import boc, icbc, wechat
 
 PARSERS = {
     "wechat": wechat.parse_boxes,
     "boc": boc.parse_boxes,
+    "icbc": icbc.parse_boxes,
 }
 
 

@@ -31,7 +31,7 @@ def build_records(per_image: list[list[Tx]], default_year: int) -> list[dict]:
                 "balance": tx.balance,
                 "income": tx.amount > 0,
                 "sign_guessed": tx.sign_guessed,
-                "year_guessed": r.year_guessed,
+                "year_guessed": r.date_guessed,
             })
         for k, c in counts.items():
             seen[k] = max(seen.get(k, 0), c)
