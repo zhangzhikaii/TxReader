@@ -47,6 +47,7 @@
       <option value="wechat">微信 · 零钱明细</option>
       <option value="boc">中国银行 · 交易明细</option>
       <option value="icbc">工商银行 · 收支明细</option>
+      <option value="suica">Suica · Apple 钱包交易详情</option>
     </select></label>
     <label>账户<input id="account" value="微信"></label>
     <label>币种<input id="currency" value="人民币"></label>
@@ -88,6 +89,8 @@ const SOURCES = {
             defaults: { account: "中行", currency: "人民币", category: "饮食费" } },
   icbc:   { hint: "点击或拖拽工商银行「收支明细」列表截图到这里（可多张）",
             defaults: { account: "工行", currency: "人民币", category: "饮食费" } },
+  suica:  { hint: "点击或拖拽 Apple 钱包里 Suica 单笔交易的详情页截图到这里（每张一笔，可多张）",
+            defaults: { account: "Suica", currency: "日元", category: "交通费" } },
 };
 const GLOBAL_SETTINGS = ["source", "year", "order"];
 const SOURCE_SETTINGS = ["account", "currency", "category"]; // remembered separately per source
