@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TxReader</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1f2328; --muted:#6b7280; --line:#e5e7eb;
+          --accent:#07c160; --income:#fff7e6; --warn:#fde8e8; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+         background:var(--bg); color:var(--text); }
+  main { max-width:1000px; margin:0 auto; padding:24px 16px; }
+  h1 { font-size:22px; margin:0 0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  .settings { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
+  label { display:flex; flex-direction:column; font-size:13px; color:var(--muted); gap:4px; }
+  input, select { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; color:var(--text); background:#fff; }
+  #drop { border:2px dashed var(--line); border-radius:10px; padding:32px; text-align:center; color:var(--muted); cursor:pointer; }
+  #drop.over { border-color:var(--accent); color:var(--accent); }
+  button { font:inherit; padding:8px 16px; border:0; border-radius:6px; background:var(--accent); color:#fff; cursor:pointer; }
+  button.secondary { background:#e5e7eb; color:var(--text); }
+  button:disabled { opacity:.5; cursor:default; }
+  .bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px; }
+  #status { color:var(--muted); font-size:14px; }
+  .table-wrap { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { border-bottom:1px solid var(--line); padding:6px; text-align:left; white-space:nowrap; }
+  td input { width:100%; min-width:80px; padding:4px 6px; }
+  td.amt input { text-align:right; width:100px; }
+  tr.income { background:var(--income); }
+  tr.newday td { border-top:2px solid #6b7280; }
+  tr.warn td.flag { color:#b91c1c; }
+  .legend { font-size:13px; color:var(--muted); margin-top:8px; }
+  .legend span { display:inline-block; width:12px; height:12px; vertical-align:middle; border:1px solid var(--line); background:var(--income); }
+</style>
+</head>
+<body>
+<main>
+  <h1>TxReader · 微信截图记账</h1>
+
+  <div class="card settings">
+    <label>账户<input id="account" value="微信"></label>
+    <label>币种<input id="currency" value="人民币"></label>
+    <label>默认种类<input id="category" value="饮食费"></label>
+    <label>年份（截图看不到年份时使用）<input id="year" type="number"></label>
+    <label>日期排序<select id="order">
+      <option value="asc">正序（旧 → 新）</option>
+      <option value="desc">倒序（新 → 旧）</option>
+    </select></label>
+  </div>
+
+  <div class="card">
+    <div id="drop">点击或拖拽微信「零钱明细」截图到这里（可多张）</div>
+    <input id="file" type="file" accept="image/*" multiple hidden>
+    <div class="bar"><span id="status"></span></div>
+  </div>
+
+  <div class="card" id="result" hidden>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>日期</th><th>曜日</th><th>账户</th><th>币种</th><th>金额</th><th>种类</th><th>描述</th><th></th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="legend"><span></span> 收入（请确认种类）　⚠ 年份或正负号是推测的，请核对</div>
+    <div class="bar">
+      <button id="export">导出 CSV</button>
+      <button id="clear" class="secondary">清空</button>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const SETTINGS = ["account", "currency", "category", "year", "order"];
+let records = [];
+
+// Remember defaults between visits
+for (const k of SETTINGS) {
+  try { const v = localStorage.getItem("tx." + k); if (v) $(k).value = v; } catch {}
+  $(k).addEventListener("change", () => { try { localStorage.setItem("tx." + k, $(k).value); } catch {} });
+}
+if (!$("year").value) $("year").value = new Date().getFullYear();
+
+function sortRecords() {
+  const dir = $("order").value === "desc" ? -1 : 1;
+  records.sort((a, b) => dir * a.date.localeCompare(b.date));
+}
+$("order").addEventListener("change", () => { sortRecords(); render(); });
+
+const drop = $("drop");
+drop.onclick = () => $("file").click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); upload(e.dataTransfer.files); };
+$("file").onchange = e => { upload(e.target.files); e.target.value = ""; };
+
+async function upload(files) {
+  if (!files.length) return;
+  const fd = new FormData();
+  for (const f of files) fd.append("files", f);
+  fd.append("year", $("year").value);
+  $("status").textContent = `识别中（${files.length} 张）…`;
+  try {
+    const res = await fetch("/api/parse", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    const fresh = data.records.map(r => ({
+      ...r, account: $("account").value, currency: $("currency").value, category: $("category").value,
+    }));
+    // Skip rows already in the table from an earlier upload
+    const key = r => `${r.date}|${r.amount}|${r.merchant}`;
+    const have = new Set(records.map(key));
+    const added = fresh.filter(r => !have.has(key(r)));
+    records = records.concat(added);
+    sortRecords();
+    $("status").textContent = `识别到 ${fresh.length} 条，新增 ${added.length} 条` +
+      (data.errors.length ? `；失败：${data.errors.join("；")}` : "");
+    render();
+  } catch (e) {
+    $("status").textContent = "出错了：" + e.message;
+  }
+}
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function render() {
+  $("result").hidden = records.length === 0;
+  $("rows").innerHTML = records.map((r, i) => {
+    const warn = r.year_guessed || r.sign_guessed;
+    const tip = [r.year_guessed && "年份为推测", r.sign_guessed && "正负号为推测"].filter(Boolean).join("，");
+    const newDay = i > 0 && r.date.slice(0, 10) !== records[i - 1].date.slice(0, 10);
+    return `<tr class="${r.amount > 0 ? "income" : ""} ${warn ? "warn" : ""} ${newDay ? "newday" : ""}">
+      <td>${esc(r.date)}</td><td>${esc(r.weekday)}</td>
+      <td><input data-i="${i}" data-k="account" value="${esc(r.account)}"></td>
+      <td><input data-i="${i}" data-k="currency" value="${esc(r.currency)}"></td>
+      <td class="amt"><input data-i="${i}" data-k="amount" value="${r.amount.toFixed(2)}"></td>
+      <td><input data-i="${i}" data-k="category" value="${esc(r.category)}"></td>
+      <td><input data-i="${i}" data-k="merchant" value="${esc(r.merchant)}"></td>
+      <td class="flag" title="${tip}">${warn ? "⚠" : ""}</td>
+      <td><button class="secondary" data-del="${i}" tabindex="-1">删除</button></td></tr>`;
+  }).join("");
+}
+
+$("rows").addEventListener("input", e => {
+  const { i, k } = e.target.dataset;
+  if (i === undefined) return;
+  records[i][k] = k === "amount" ? (parseFloat(e.target.value) || 0) : e.target.value;
+});
+// Update the income colour in place (a full re-render would steal focus while moving between cells)
+$("rows").addEventListener("change", e => {
+  if (e.target.dataset.k === "amount") e.target.closest("tr").classList.toggle("income", records[e.target.dataset.i].amount > 0);
+});
+// Enter: same column, next row (Shift+Enter: previous row). Tab moves right natively.
+$("rows").addEventListener("keydown", e => {
+  if (e.key !== "Enter" || e.isComposing || !e.target.dataset.k) return; // isComposing: ignore Enter confirming IME input
+  e.preventDefault();
+  const i = +e.target.dataset.i + (e.shiftKey ? -1 : 1);
+  const next = $("rows").querySelector(`input[data-i="${i}"][data-k="${e.target.dataset.k}"]`);
+  if (next) { next.focus(); next.select(); }
+});
+// Select the whole cell when tabbing/clicking in, like a spreadsheet
+$("rows").addEventListener("focusin", e => { if (e.target.dataset.k) e.target.select(); });
+$("rows").addEventListener("click", e => {
+  if (e.target.dataset.del !== undefined) { records.splice(+e.target.dataset.del, 1); render(); }
+});
+$("clear").onclick = () => { records = []; $("status").textContent = ""; render(); };
+
+$("export").onclick = () => {
+  const cell = v => /[",\n]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : v;
+  const lines = [["日期", "曜日", "账户", "币种", "金额", "种类", "描述"]].concat(records.map(r =>
+    [r.date, r.weekday, r.account, r.currency, r.amount.toFixed(2), r.category, r.merchant]));
+  const csv = "﻿" + lines.map(l => l.map(cell).join(",")).join("\r\n") + "\r\n";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const now = new Date(), p = n => String(n).padStart(2, "0");
+  a.download = `wechat_${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}_${p(now.getHours())}${p(now.getMinutes())}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+# TxReader
+
+上传微信「零钱明细」截图，自动识别交易并导出 CSV。识别全部在本地完成（RapidOCR），不联网。
+
+## 运行
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/uvicorn app:app --port 8000
+```
+
+打开 http://localhost:8000 ，填写账户、币种、默认种类，然后拖入截图（可多张），检查预览表后导出 CSV。
+
+## CSV 格式
+
+`日期,曜日,账户,币种,金额,种类,描述`，例如：
+
+```
+2026/10/29 10:54:00,木,微信,人民币,-87.00,饮食费,同程旅行
+```
+
+- 截图只显示到分钟，秒统一为 `00`
+- 年份取自截图顶部的「2026年10月」；看不到时用页面上填的年份（若会落在未来则往前推一年），并标 ⚠
+- 支出为负数，收入为正数；收入行以黄色底标出，记得改种类
+- 多张截图的重叠部分会自动去重
+- 文件带 UTF-8 BOM，Excel 直接打开不乱码
+
+## 测试
+
+```bash
+.venv/bin/python -m pytest tests
+```
+
+> 带有个人信息的样例截图放在 `samples/`（已被 git 忽略）。测试会用到 `samples/example.PNG` 和对应的期望结果 `samples/example.expected.json`，文件不存在时自动跳过。
