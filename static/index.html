@@ -27,7 +27,10 @@
   table { border-collapse:collapse; width:100%; font-size:14px; }
   th, td { border-bottom:1px solid var(--line); padding:6px; text-align:left; white-space:nowrap; }
   td input { width:100%; min-width:80px; padding:4px 6px; }
-  td.amt input { text-align:right; width:100px; }
+  td.amt input { text-align:right; width:120px; font-variant-numeric:tabular-nums; }
+  td.date input { width:170px; font-variant-numeric:tabular-nums; }
+  td input.guess { border-color:#f59e0b; background:#fffbeb; }
+  td input.invalid { border-color:#dc2626; background:#fef2f2; }
   tr.income { background:var(--income); }
   tr.newday td { border-top:2px solid #6b7280; }
   tr.warn td.flag { color:#b91c1c; }
@@ -68,7 +71,7 @@
         <tbody id="rows"></tbody>
       </table>
     </div>
-    <div class="legend"><span></span> 收入（请确认种类）　⚠ 年份或正负号是推测的，请核对</div>
+    <div class="legend"><span></span> 收入（请确认种类）　⚠ 日期或正负号是推测的，请核对　日期格式 2026/10/29 22:12:00，可直接修改</div>
     <div class="bar">
       <button id="export">导出 CSV</button>
       <button id="clear" class="secondary">清空</button>
@@ -89,6 +92,7 @@ const SOURCES = {
 const GLOBAL_SETTINGS = ["source", "year", "order"];
 const SOURCE_SETTINGS = ["account", "currency", "category"]; // remembered separately per source
 let records = [];
+let nextId = 1; // stable row id, so focus survives re-sorting
 
 const load = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const save = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
@@ -144,7 +148,7 @@ async function upload(files) {
     // Skip rows already in the table from an earlier upload
     const key = r => `${r.date}|${r.amount}|${r.merchant}|${r.balance}`;
     const have = new Set(records.map(key));
-    const added = fresh.filter(r => !have.has(key(r)));
+    const added = fresh.filter(r => !have.has(key(r))).map(r => ({ ...r, id: nextId++ }));
     records = records.concat(added);
     sortRecords();
     $("status").textContent = `识别到 ${fresh.length} 条，新增 ${added.length} 条` +
@@ -157,45 +161,85 @@ async function upload(files) {
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+const WEEKDAYS_JA = "日月火水木金土"; // indexed by Date.getDay()
+const byId = id => records.find(r => r.id === +id);
+const fmtAmount = n => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const parseAmount = s => parseFloat(String(s).replace(/[,\s¥]/g, "")) || 0;
+
+// Accepts 2026/10/29 22:12:00, 2026-10-29 22:12, 2026/10/29 ...; returns normalized string or null
+function parseDate(s) {
+  const m = s.trim().match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (!m) return null;
+  const [y, mo, d, h = 0, mi = 0, se = 0] = m.slice(1).map(v => v === undefined ? undefined : +v);
+  const dt = new Date(y, mo - 1, d, h, mi, se);
+  if (dt.getMonth() !== mo - 1 || dt.getDate() !== d || h > 23 || mi > 59 || se > 59) return null;
+  const p = n => String(n).padStart(2, "0");
+  return { date: `${y}/${p(mo)}/${p(d)} ${p(h)}:${p(mi)}:${p(se)}`, weekday: WEEKDAYS_JA[dt.getDay()] };
+}
+
 function render() {
+  // Remember which cell had focus so it can be restored after rebuilding the table
+  const active = document.activeElement?.dataset ?? {};
   $("result").hidden = records.length === 0;
   $("rows").innerHTML = records.map((r, i) => {
     const warn = r.year_guessed || r.sign_guessed;
-    const tip = [r.year_guessed && "年份为推测", r.sign_guessed && "正负号为推测"].filter(Boolean).join("，");
+    const tip = [r.year_guessed && "日期为推测", r.sign_guessed && "正负号为推测"].filter(Boolean).join("，");
     const newDay = i > 0 && r.date.slice(0, 10) !== records[i - 1].date.slice(0, 10);
     return `<tr class="${r.amount > 0 ? "income" : ""} ${warn ? "warn" : ""} ${newDay ? "newday" : ""}">
-      <td>${esc(r.date)}</td><td>${esc(r.weekday)}</td>
-      <td><input data-i="${i}" data-k="account" value="${esc(r.account)}"></td>
-      <td><input data-i="${i}" data-k="currency" value="${esc(r.currency)}"></td>
-      <td class="amt"><input data-i="${i}" data-k="amount" value="${r.amount.toFixed(2)}"></td>
-      <td><input data-i="${i}" data-k="category" value="${esc(r.category)}"></td>
-      <td><input data-i="${i}" data-k="merchant" value="${esc(r.merchant)}"></td>
+      <td class="date"><input data-id="${r.id}" data-k="date" value="${esc(r.date)}" class="${r.year_guessed ? "guess" : ""}" title="${r.year_guessed ? "日期为推测，请核对" : ""}"></td>
+      <td>${esc(r.weekday)}</td>
+      <td><input data-id="${r.id}" data-k="account" value="${esc(r.account)}"></td>
+      <td><input data-id="${r.id}" data-k="currency" value="${esc(r.currency)}"></td>
+      <td class="amt"><input data-id="${r.id}" data-k="amount" value="${fmtAmount(r.amount)}"></td>
+      <td><input data-id="${r.id}" data-k="category" value="${esc(r.category)}"></td>
+      <td><input data-id="${r.id}" data-k="merchant" value="${esc(r.merchant)}"></td>
       <td class="flag" title="${tip}">${warn ? "⚠" : ""}</td>
-      <td><button class="secondary" data-del="${i}" tabindex="-1">删除</button></td></tr>`;
+      <td><button class="secondary" data-del="${r.id}" tabindex="-1">删除</button></td></tr>`;
   }).join("");
+  if (active.id && active.k) $("rows").querySelector(`input[data-id="${active.id}"][data-k="${active.k}"]`)?.focus();
 }
 
 $("rows").addEventListener("input", e => {
-  const { i, k } = e.target.dataset;
-  if (i === undefined) return;
-  records[i][k] = k === "amount" ? (parseFloat(e.target.value) || 0) : e.target.value;
+  const { id, k } = e.target.dataset;
+  if (!id || k === "date") return; // dates are applied on change, once complete
+  byId(id)[k] = k === "amount" ? parseAmount(e.target.value) : e.target.value;
 });
-// Update the income colour in place (a full re-render would steal focus while moving between cells)
 $("rows").addEventListener("change", e => {
-  if (e.target.dataset.k === "amount") e.target.closest("tr").classList.toggle("income", records[e.target.dataset.i].amount > 0);
+  const { id, k } = e.target.dataset;
+  const r = id && byId(id);
+  if (!r) return;
+  if (k === "amount") {
+    // Update in place (a full re-render isn't needed)
+    e.target.value = fmtAmount(r.amount);
+    e.target.closest("tr").classList.toggle("income", r.amount > 0);
+  } else if (k === "date") {
+    const parsed = parseDate(e.target.value);
+    if (!parsed) {
+      e.target.classList.add("invalid");
+      $("status").textContent = `日期格式不对：「${e.target.value}」，应为 2026/10/29 22:12:00`;
+      return;
+    }
+    Object.assign(r, parsed, { year_guessed: false }); // user has checked this date
+    $("status").textContent = "";
+    sortRecords();
+    render();
+  }
 });
 // Enter: same column, next row (Shift+Enter: previous row). Tab moves right natively.
 $("rows").addEventListener("keydown", e => {
   if (e.key !== "Enter" || e.isComposing || !e.target.dataset.k) return; // isComposing: ignore Enter confirming IME input
   e.preventDefault();
-  const i = +e.target.dataset.i + (e.shiftKey ? -1 : 1);
-  const next = $("rows").querySelector(`input[data-i="${i}"][data-k="${e.target.dataset.k}"]`);
-  if (next) { next.focus(); next.select(); }
+  const tr = e.target.closest("tr");
+  const row = e.shiftKey ? tr.previousElementSibling : tr.nextElementSibling;
+  const next = row?.querySelector(`input[data-k="${e.target.dataset.k}"]`);
+  if (next) next.focus();
+  else e.target.dispatchEvent(new Event("change", { bubbles: true })); // last row: still apply the edit
 });
 // Select the whole cell when tabbing/clicking in, like a spreadsheet
 $("rows").addEventListener("focusin", e => { if (e.target.dataset.k) e.target.select(); });
 $("rows").addEventListener("click", e => {
-  if (e.target.dataset.del !== undefined) { records.splice(+e.target.dataset.del, 1); render(); }
+  const id = e.target.dataset.del;
+  if (id !== undefined) { records = records.filter(r => r.id !== +id); render(); }
 });
 $("clear").onclick = () => { records = []; $("status").textContent = ""; render(); };
 
@@ -207,7 +251,7 @@ $("export").onclick = () => {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
   const now = new Date(), p = n => String(n).padStart(2, "0");
-  a.download = `wechat_${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}_${p(now.getHours())}${p(now.getMinutes())}.csv`;
+  a.download = `txreader_${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}_${p(now.getHours())}${p(now.getMinutes())}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
 };
