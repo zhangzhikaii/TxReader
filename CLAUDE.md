@@ -8,13 +8,14 @@
 
 ```
 app.py                    FastAPI：GET / 返回页面，POST /api/parse 接收截图 + year + source，返回 records
-txreader/ocr.py           RapidOCR 封装：图片 -> Box(text, x0, y0, x1, y1, score)
+txreader/ocr.py           RapidOCR 封装：图片 -> Box(text, x0, y0, x1, y1, score, angle)
 txreader/parsers/         每个来源一个解析器，parse_boxes(boxes, img) -> (list[Tx], warnings)
   __init__.py             PARSERS 注册表（来源 key -> 解析器）
   wechat.py               微信「零钱明细」列表；收支靠金额颜色区分（橙色为收入）
   boc.py                  中国银行单笔「明细」页（每张一笔）
   icbc.py                 工商银行「收支明细」列表；看不到月份标题时按星期推断月份
   suica.py                Apple 钱包 Suica 单笔详情页
+  receipt.py              纸质小票照片（各家版式不同）；按文本框倾斜角配对「合計」与金额
 txreader/models.py        Tx（解析结果）与 resolve_date（补全缺失的年 / 月，并标记为推测）
 txreader/records.py       build_records：合并多张截图、跨截图去重、按时间排序，生成行
 static/index.html         整个前端，单文件原生 JS，无构建步骤

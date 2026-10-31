@@ -6,6 +6,7 @@ Layout (samples/ is private and git-ignored, so these tests skip without it):
 <source> is a parser name (folder name is matched case-insensitively, e.g. BOC -> boc).
 """
 import json
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import pytest
@@ -50,12 +51,27 @@ if not CASES:
     pytest.skip("no private samples present", allow_module_level=True)
 
 
+# Photos of paper receipts: shop names come from logos and odd fonts, so OCR often gets
+# a character or two wrong and the user fixes it in the preview. Date and amount must
+# still match exactly; the merchant only has to be close.
+FUZZY_MERCHANT_SOURCES = {"receipt"}
+
+
+def _close(a: str, b: str) -> bool:
+    return SequenceMatcher(None, a, b).ratio() >= 0.6
+
+
 @pytest.mark.parametrize("case", CASES, ids=lambda p: f"{p.parent.name}/{p.name}")
 def test_sample(case):
     source, img, expected, year = _load(case)
     txs, warnings = parse_image(img, source)
     assert warnings == []
-    assert _by_date(_rows(build_records([txs], year))) == _by_date(expected)
+    got, want = _by_date(_rows(build_records([txs], year))), _by_date(expected)
+    if source in FUZZY_MERCHANT_SOURCES:
+        assert [r[:3] for r in got] == [r[:3] for r in want]
+        assert all(_close(g[3], w[3]) for g, w in zip(got, want))
+    else:
+        assert got == want
 
 
 # Sources whose screenshots are scrolling lists (BOC uses one detail page per transaction)

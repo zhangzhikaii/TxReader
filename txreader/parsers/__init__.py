@@ -3,13 +3,14 @@ import numpy as np
 
 from ..models import Tx
 from ..ocr import run_ocr
-from . import boc, icbc, suica, wechat
+from . import boc, icbc, receipt, suica, wechat
 
 PARSERS = {
     "wechat": wechat.parse_boxes,
     "boc": boc.parse_boxes,
     "icbc": icbc.parse_boxes,
     "suica": suica.parse_boxes,
+    "receipt": receipt.parse_boxes,
 }
 
 

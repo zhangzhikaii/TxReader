@@ -2,6 +2,8 @@
 from dataclasses import dataclass
 from functools import lru_cache
 
+import math
+
 import cv2
 import numpy as np
 
@@ -14,6 +16,7 @@ class Box:
     x1: float
     y1: float
     score: float
+    angle: float = 0.0  # slope of the text line in degrees; positive = going down to the right
 
     @property
     def cy(self) -> float:
@@ -41,5 +44,7 @@ def run_ocr(img: np.ndarray) -> list[Box]:
     for pts, text, score in zip(result.boxes, result.txts, result.scores):
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
-        boxes.append(Box(text.strip(), min(xs), min(ys), max(xs), max(ys), float(score)))
+        (ax, ay), (bx, by) = pts[0], pts[1]  # top-left and top-right corners
+        angle = math.degrees(math.atan2(by - ay, bx - ax))
+        boxes.append(Box(text.strip(), min(xs), min(ys), max(xs), max(ys), float(score), angle))
     return boxes
