@@ -4,3 +4,4 @@ fastapi
 uvicorn
 python-multipart
 pytest
+httpx  # tests only (FastAPI TestClient)

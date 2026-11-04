@@ -17,10 +17,30 @@
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+.venv/bin/python -m txreader.auth          # 输入密码，打印出密码哈希
+export TXREADER_PASSWORD_HASH='scrypt:...'  # 上一步的输出
 .venv/bin/uvicorn app:app --port 8000
 ```
 
-打开 http://localhost:8000 ，选择来源，填写账户、币种、默认种类（每个来源分别记住），然后拖入截图，检查预览表后导出 CSV。
+只在自己电脑上用、不想登录时，可以改用 `TXREADER_AUTH=off`（不要在服务器上这样做）。
+
+打开 http://localhost:8000 ，登录后有四个页面：
+
+- **识别**：选择来源，填写账户、币种、默认种类（每个来源分别记住），拖入截图。识别出的交易进入「待核对」，修改会自动保存，下次打开还在；勾选核对好的行，点「提交入库」
+- **交易**：已入库的交易，可按来源和日期筛选；入库后只能改描述；点一行查看原截图
+- **导出**：勾选交易导出 CSV，默认勾选没导出过的；导出过的也能再导出，每次导出都有记录
+- **登录记录**：登录成功 / 失败的记录，当前登录的设备，可以让所有设备下线。密码连续错 5 次锁定 15 分钟
+
+### 重复的截图和交易
+
+- 同一张截图（文件内容相同）再传不会重新识别，直接用上次的结果
+- 已经入库的交易自动跳过（页面上可以展开查看）；已在待核对里的不会重复添加
+- 日期和金额相同、商户不同的标为「疑似重复」，默认不勾选，确认是重复的就删掉
+- 比对用的是识别出的原始值，不受你后来的修改影响；只在同一来源内比对
+
+### 数据
+
+都存在 `data/`（可用环境变量 `TXREADER_DATA` 改位置，已被 git 忽略）：`txreader.db` 是 SQLite 数据库，`images/` 是转成 WebP 的截图。备份这个目录即可。
 
 ## CSV 格式
 
@@ -42,5 +62,7 @@ python3 -m venv .venv
 ```bash
 .venv/bin/python -m pytest tests
 ```
+
+`tests/test_api.py` 用假的识别结果和临时数据目录跑完整流程（上传、核对、入库、导出、登录），不需要截图。
 
 > 带有个人信息的样例截图放在 `samples/<来源>/`（已被 git 忽略），例如 `samples/wechat/example.PNG` 配 `samples/wechat/example.expected.json`。测试会自动跑所有带期望结果的截图，没有样例时自动跳过。

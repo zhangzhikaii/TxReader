@@ -1,6 +1,6 @@
 # 云端部署计划：数据库、核对入库、导出记录、登录
 
-状态：已商定，未开始实施（2026-11-04）
+状态：第 1–5 步已完成（2026-11-04），第 6 步（部署）暂缓
 
 ## 目标
 
@@ -58,12 +58,22 @@
 
 ## 实施步骤
 
-- [ ] 1. 数据库与图片存储（WebP、哈希）
-- [ ] 2. 比对逻辑，测试写进 `tests/test_logic.py`
-- [ ] 3. 前端：识别页流程改造、交易页
-- [ ] 4. 导出页与导出记录
-- [ ] 5. 登录、会话、登录日志
+- [x] 1. 数据库与图片存储（WebP、哈希）
+- [x] 2. 比对逻辑，测试写进 `tests/test_logic.py`
+- [x] 3. 前端：识别页流程改造、交易页
+- [x] 4. 导出页与导出记录
+- [x] 5. 登录、会话、登录日志
 - [ ] 6. 部署：Dockerfile、数据目录挂载、备份；更新 README 和 CLAUDE.md 里「不联网」的说法
+
+## 实施时补充的细节
+
+- `images.parsed`：存解析器的原始结果（JSON），同一张图再传时直接用它，不用再 OCR。同一张图换了来源上传时会重新识别
+- `ocr_rows.suspect_of`：疑似重复时指向那一行；`ocr_rows.draft`：待核对时的修改（JSON），提交时才写进 `transactions`
+- `login_events.reason`：`ok` / `bad_password` / `locked` / `not_configured`。只有 `bad_password` 计入锁定：连续 5 次（中间没有成功）且都在 15 分钟内，锁定到第一次失败后 15 分钟
+- 密码哈希格式 `scrypt:n:r:p:salt:hash`，用 `python -m txreader.auth` 生成；`TXREADER_AUTH=off` 关闭登录（只用于本机）
+- 会话 30 天过期，cookie 为 HttpOnly + SameSite=Lax，HTTPS 下加 Secure
+- 「疑似重复」的行默认不勾选；确认是重复的就删除该待核对行（没有「忽略」状态，删掉后再传同一张图会重新出现）
+- 导出的 CSV 在服务器生成，格式不变
 
 ## 以后再定
 

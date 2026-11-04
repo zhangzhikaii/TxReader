@@ -14,9 +14,9 @@ def build_records(per_image: list[list[Tx]], default_year: int) -> list[dict]:
     seen: dict[tuple, int] = {}
     out = []
     pos = 0  # position across all screenshots, top to bottom
-    for txs in per_image:
+    for img, txs in enumerate(per_image):
         counts: dict[tuple, int] = {}
-        for tx in txs:
+        for img_pos, tx in enumerate(txs):
             pos += 1
             r = resolve_date(tx, default_year)
             key = (r.dt, tx.amount, tx.merchant, tx.balance)
@@ -32,6 +32,8 @@ def build_records(per_image: list[list[Tx]], default_year: int) -> list[dict]:
                 "income": tx.amount > 0,
                 "sign_guessed": tx.sign_guessed,
                 "year_guessed": r.date_guessed,
+                "img": img,          # index into per_image
+                "img_pos": img_pos,  # order within that screenshot
             })
         for k, c in counts.items():
             seen[k] = max(seen.get(k, 0), c)

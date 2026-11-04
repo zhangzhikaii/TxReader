@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TxReader · 登录</title>
+<style>
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px;
+         font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:#f6f7f9; color:#1f2328; }
+  form { width:100%; max-width:320px; background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:24px;
+         display:flex; flex-direction:column; gap:12px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  input { font:inherit; padding:8px 10px; border:1px solid #e5e7eb; border-radius:6px; }
+  button { font:inherit; padding:8px 16px; border:0; border-radius:6px; background:#07c160; color:#fff; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  #error { color:#b91c1c; font-size:14px; min-height:1.2em; margin:0; }
+</style>
+</head>
+<body>
+<form id="form">
+  <h1>TxReader</h1>
+  <input id="password" type="password" placeholder="密码" autocomplete="current-password" autofocus required>
+  <button>登录</button>
+  <p id="error"></p>
+</form>
+<script>
+const form = document.getElementById("form");
+form.onsubmit = async e => {
+  e.preventDefault();
+  const btn = form.querySelector("button");
+  const err = document.getElementById("error");
+  btn.disabled = true;
+  err.textContent = "";
+  try {
+    const res = await fetch("/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: document.getElementById("password").value }),
+    });
+    if (res.ok) return location.replace("/");
+    err.textContent = (await res.json().catch(() => ({}))).detail || "登录失败";
+  } catch {
+    err.textContent = "连不上服务器";
+  }
+  btn.disabled = false;
+  document.getElementById("password").select();
+};
+</script>
+</body>
+</html>

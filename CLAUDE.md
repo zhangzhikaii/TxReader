@@ -2,12 +2,16 @@
 
 本地网页工具：上传手机 App 的交易截图，用 OCR 识别出交易，在网页里核对、修改后导出记账用的 CSV。用户自己记账用，识别完全在本地（RapidOCR），不联网。用户用中文交流。
 
-运行、CSV 格式、各来源的说明见 `README.md`。正在计划部署到云端（数据库、核对入库、导出记录、登录），见 `docs/cloud-plan.md`，做完一步就在上面打勾。
+运行、CSV 格式、各来源的说明见 `README.md`。云端部署计划（数据库、核对入库、导出记录、登录、部署）见 `docs/cloud-plan.md`，做完一步就在上面打勾；目前只剩第 6 步部署。
 
 ## 结构
 
 ```
-app.py                    FastAPI：GET / 返回页面，POST /api/parse 接收截图 + year + source，返回 records
+app.py                    FastAPI：页面、登录检查（中间件）、全部 /api 接口
+txreader/db.py            SQLite 表结构、连接、截图存成 WebP（数据目录 TXREADER_DATA，默认 data/）
+txreader/store.py         识别入库流程、待核对行、确认入库、交易、导出 CSV
+txreader/matching.py      新识别的行与库里已有行比对（跳过 / 合并 / 疑似重复 / 新增）
+txreader/auth.py          单用户密码登录、会话、登录记录、错误次数锁定；`python -m txreader.auth` 生成密码哈希
 txreader/ocr.py           RapidOCR 封装：图片 -> Box(text, x0, y0, x1, y1, score, angle)
 txreader/parsers/         每个来源一个解析器，parse_boxes(boxes, img) -> (list[Tx], warnings)
   __init__.py             PARSERS 注册表（来源 key -> 解析器）
@@ -18,12 +22,14 @@ txreader/parsers/         每个来源一个解析器，parse_boxes(boxes, img) 
   receipt.py              纸质小票照片（各家版式不同）；按文本框倾斜角配对「合計」与金额
 txreader/models.py        Tx（解析结果）与 resolve_date（补全缺失的年 / 月，并标记为推测）
 txreader/records.py       build_records：合并多张截图、跨截图去重、按时间排序，生成行
-static/index.html         整个前端，单文件原生 JS，无构建步骤
-tests/test_logic.py       去重、日期推断等纯逻辑测试
+static/index.html         整个前端（识别 / 交易 / 导出 / 登录记录四个页面，按 #hash 切换），单文件原生 JS，无构建步骤
+static/login.html         登录页
+tests/test_logic.py       去重、日期推断、比对规则等纯逻辑测试
+tests/test_api.py         接口全流程测试（假识别结果 + 临时数据目录）
 tests/test_samples.py     用 samples/ 里的真实截图对照期望结果（没有 samples/ 时自动跳过）
 ```
 
-数据流：截图 → OCR Box → 来源解析器 → `Tx` → `build_records` → JSON 行 → 前端预览表（可编辑）→ 导出 CSV。
+数据流：截图（按哈希存成 WebP，传过的直接用上次结果）→ OCR Box → 来源解析器 → `Tx` → `build_records` → `match_rows` 与库里比对 → 新行存为 `ocr_rows`（pending）→ 前端核对、修改（存为 draft）→ 确认后写入 `transactions` → 导出 CSV 并记录到 `exports`。
 
 ## 约定
 
@@ -31,6 +37,7 @@ tests/test_samples.py     用 samples/ 里的真实截图对照期望结果（�
 - 去重：只去掉**不同截图之间**的重复（滚动截图会重叠），同一张截图里两笔一模一样的交易都保留；有余额时用余额区分。
 - 每个来源的解析器顶部 docstring 画出该截图的版式，改解析器前先看它。示例里的商户名都用「某某商户」这类占位。
 - 代码注释用英文，界面文字、README、提交信息用中文。
+- `ocr_rows` 里的识别原始值不改，比对只用它们；待核对时的修改存在 `draft`（JSON）里。入库后只能改描述。没有「忽略」状态，不要的待核对行直接删除。
 
 ### 新增一个来源时要改
 
@@ -41,14 +48,16 @@ tests/test_samples.py     用 samples/ 里的真实截图对照期望结果（�
 
 ## 前端要点（static/index.html）
 
-- 状态都在内存里：`records`（表格行）、`images`（已上传截图的缩略图）。只有设置项存 localStorage，账户 / 币种 / 种类按来源分别记住。
-- 切换来源或点「清空」都会调用 `clearAll()`，清掉记录、截图和大图，并让 `session` 加一，这样仍在识别中的请求返回后会被丢弃。
-- 删除缩略图只删截图，不影响已识别出的行。
+- 待核对行、交易都从服务器读取；`records` 是当前来源的待核对行，`images` 只是本次上传的缩略图。设置项存 localStorage，账户 / 币种 / 种类按来源分别记住；没手动改过的行跟随默认值。
+- 切换来源会调用 `clearSession()`，清掉缩略图和大图，并让 `session` 加一，这样仍在识别中的请求返回后会被丢弃，然后重新读取该来源的待核对行。
+- 删除缩略图只是从页面移除，不影响已识别出的行；每行的 🖼 按钮从服务器打开它的原截图。
 - 点缩略图在右侧打开大图，方便对照核对；窄屏时大图全屏显示。
+- 所有请求走 `api()`，收到 401 跳转到 /login。
 
 ## 隐私（重要）
 
 - `samples/` 里是用户真实的交易截图和期望结果（已被 git 忽略）。**不要在未询问的情况下打开、读取或 OCR 打印其中的任何文件。** `expected.json` 由用户自己写。
+- `data/`（或 `TXREADER_DATA` 指向的目录）里是真实的数据库和截图，同样**不要在未询问的情况下打开或查询**。调试时用临时数据目录。
 - 跑样例测试用 `.venv/bin/python -m pytest -q --tb=no`，只看通过 / 失败数量，避免截图内容出现在输出里。
 - 需要调试解析器时，请用户提供打码后的截图或描述版式。
 - 代码、docstring、提交信息里不要出现真实人名。

@@ -6,12 +6,12 @@
 <title>TxReader</title>
 <style>
   :root { --bg:#f6f7f9; --card:#fff; --text:#1f2328; --muted:#6b7280; --line:#e5e7eb;
-          --accent:#07c160; --income:#fff7e6; --warn:#fde8e8; }
+          --accent:#07c160; --income:#fff7e6; --warn:#fde8e8; --suspect:#f3e8ff; }
   * { box-sizing:border-box; }
   body { margin:0; font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
          background:var(--bg); color:var(--text); }
   .layout { display:flex; align-items:flex-start; }
-  main { flex:1; min-width:0; max-width:1000px; margin:0 auto; padding:24px 16px; }
+  main { flex:1; min-width:0; max-width:1100px; margin:0 auto; padding:24px 16px; }
   /* Screenshot viewer: a column pinned to the right edge, as wide as the screenshot shown at full
      height (capped so the table keeps its room). The page content stays centred in the space left. */
   #viewer { display:none; flex:0 0 auto; position:sticky; top:0; height:100vh;
@@ -40,80 +40,197 @@
     body.viewing #viewer { position:fixed; inset:0; height:auto; width:auto; z-index:10; border:0; }
     #viewer-img { max-width:100%; }
   }
-  h1 { font-size:22px; margin:0 0 16px; }
+  header { display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
+  h1 { font-size:22px; margin:0; }
+  nav { display:flex; gap:4px; flex-wrap:wrap; }
+  nav a { padding:6px 12px; border-radius:6px; color:var(--text); text-decoration:none; font-size:14px; }
+  nav a:hover { background:var(--line); }
+  nav a.active { background:var(--accent); color:#fff; }
+  #logout { margin-left:auto; }
+  h2 { font-size:16px; margin:0 0 12px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
   .settings { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
   label { display:flex; flex-direction:column; font-size:13px; color:var(--muted); gap:4px; }
   input, select { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; color:var(--text); background:#fff; }
+  input[type=checkbox] { width:16px; height:16px; padding:0; margin:0; vertical-align:middle; }
   #drop { border:2px dashed var(--line); border-radius:10px; padding:32px; text-align:center; color:var(--muted); cursor:pointer; }
   #drop.over { border-color:var(--accent); color:var(--accent); }
   button { font:inherit; padding:8px 16px; border:0; border-radius:6px; background:var(--accent); color:#fff; cursor:pointer; }
   button.secondary { background:#e5e7eb; color:var(--text); }
+  button.danger { background:#fee2e2; color:#b91c1c; }
   button:disabled { opacity:.5; cursor:default; }
   .bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px; }
-  #status { color:var(--muted); font-size:14px; }
+  .status { color:var(--muted); font-size:14px; }
   .table-wrap { overflow-x:auto; }
   table { border-collapse:collapse; width:100%; font-size:14px; }
   th, td { border-bottom:1px solid var(--line); padding:6px 4px; text-align:left; white-space:nowrap; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  td.wrap { white-space:normal; }
   /* Column widths sized so the table fits without sideways scrolling, also with the viewer open */
-  td input { width:100%; min-width:72px; padding:4px 6px; }
+  td input:not([type=checkbox]) { width:100%; min-width:72px; padding:4px 6px; }
   td.amt input { text-align:right; width:100px; font-variant-numeric:tabular-nums; }
   td.date input { width:160px; padding:4px; font-variant-numeric:tabular-nums; }
   td input[data-k="currency"] { width:60px; min-width:60px; }
-  td input[data-k="merchant"] { min-width:180px; }
+  td input[data-k="merchant"], td input[data-k="description"] { min-width:180px; }
   td button { padding:4px 10px; }
+  td button.icon { padding:2px 6px; background:none; color:var(--muted); font-size:15px; }
+  td button.icon:hover { color:var(--text); background:var(--line); }
+  td button.icon.active { color:var(--accent); }
   td input.guess { border-color:#f59e0b; background:#fffbeb; }
   td input.invalid { border-color:#dc2626; background:#fef2f2; }
   tr.income { background:var(--income); }
+  tr.suspect { background:var(--suspect); }
   tr.newday td { border-top:2px solid #6b7280; }
   tr.warn td.flag { color:#b91c1c; }
+  tr.exported { color:var(--muted); }
+  tr.clickable { cursor:pointer; }
+  tr.clickable:hover { background:#f9fafb; }
+  tr.clickable.viewing { background:#ecfdf5; }
+  .tag { display:inline-block; padding:0 6px; border-radius:4px; font-size:12px; background:#e9d5ff; color:#6b21a8; }
+  .tag.done { background:#dcfce7; color:#166534; }
   .legend { font-size:13px; color:var(--muted); margin-top:8px; }
-  .legend span { display:inline-block; width:12px; height:12px; vertical-align:middle; border:1px solid var(--line); background:var(--income); }
+  .legend span.sw { display:inline-block; width:12px; height:12px; vertical-align:middle; border:1px solid var(--line); }
+  details { margin-top:12px; font-size:14px; }
+  details summary { cursor:pointer; color:var(--muted); }
+  .empty { color:var(--muted); font-size:14px; padding:12px 0; }
 </style>
 </head>
 <body>
 <div class="layout">
 <main>
-  <h1>TxReader · 截图记账</h1>
+  <header>
+    <h1>TxReader · 截图记账</h1>
+    <nav>
+      <a href="#recognize" data-view="recognize">识别</a>
+      <a href="#transactions" data-view="transactions">交易</a>
+      <a href="#export" data-view="export">导出</a>
+      <a href="#security" data-view="security">登录记录</a>
+    </nav>
+    <button id="logout" class="secondary" hidden>退出</button>
+  </header>
 
-  <div class="card settings">
-    <label>来源<select id="source">
-      <option value="wechat">微信 · 零钱明细</option>
-      <option value="boc">中国银行 · 交易明细</option>
-      <option value="icbc">工商银行 · 收支明细</option>
-      <option value="suica">Suica · Apple 钱包交易详情</option>
-      <option value="receipt">小票 · 纸质收据照片</option>
-    </select></label>
-    <label>账户<input id="account" value="微信"></label>
-    <label>币种<input id="currency" value="人民币"></label>
-    <label>默认种类<input id="category" value="饮食费"></label>
-    <label>年份（截图看不到年份时使用）<input id="year" type="number"></label>
-    <label>日期排序<select id="order">
-      <option value="asc">正序（旧 → 新）</option>
-      <option value="desc">倒序（新 → 旧）</option>
-    </select></label>
-  </div>
-
-  <div class="card">
-    <div id="drop"></div>
-    <input id="file" type="file" accept="image/*" multiple hidden>
-    <div id="thumbs" class="thumbs"></div>
-    <div class="bar"><span id="status"></span></div>
-  </div>
-
-  <div class="card" id="result" hidden>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>日期</th><th>曜日</th><th>账户</th><th>币种</th><th>金额</th><th>种类</th><th>描述</th><th></th><th></th></tr></thead>
-        <tbody id="rows"></tbody>
-      </table>
+  <!-- ===== 识别 ===== -->
+  <section id="view-recognize" hidden>
+    <div class="card settings">
+      <label>来源<select id="source">
+        <option value="wechat">微信 · 零钱明细</option>
+        <option value="boc">中国银行 · 交易明细</option>
+        <option value="icbc">工商银行 · 收支明细</option>
+        <option value="suica">Suica · Apple 钱包交易详情</option>
+        <option value="receipt">小票 · 纸质收据照片</option>
+      </select></label>
+      <label>账户<input id="account" value="微信"></label>
+      <label>币种<input id="currency" value="人民币"></label>
+      <label>默认种类<input id="category" value="饮食费"></label>
+      <label>年份（截图看不到年份时使用）<input id="year" type="number"></label>
+      <label>日期排序<select id="order">
+        <option value="asc">正序（旧 → 新）</option>
+        <option value="desc">倒序（新 → 旧）</option>
+      </select></label>
     </div>
-    <div class="legend"><span></span> 收入（请确认种类）　⚠ 日期或正负号是推测的，请核对　日期格式 2026/10/29 22:12:00，可直接修改</div>
-    <div class="bar">
-      <button id="export">导出 CSV</button>
-      <button id="clear" class="secondary">清空</button>
+
+    <div class="card">
+      <div id="drop"></div>
+      <input id="file" type="file" accept="image/*" multiple hidden>
+      <div id="thumbs" class="thumbs"></div>
+      <div class="bar"><span id="status" class="status"></span></div>
     </div>
-  </div>
+
+    <div class="card" id="result" hidden>
+      <h2>待核对</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><input type="checkbox" id="check-all" title="全选"></th><th>日期</th><th>曜日</th><th>账户</th><th>币种</th><th>金额</th><th>种类</th><th>描述</th><th></th><th></th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div id="no-pending" class="empty" hidden>没有待核对的交易</div>
+      <div class="legend"><span class="sw" style="background:var(--income)"></span> 收入（请确认种类）　<span class="sw" style="background:var(--suspect)"></span> 疑似重复（日期金额相同、商户不同，默认不勾选）　⚠ 日期或正负号是推测的　日期格式 2026/10/29 22:12:00<br>修改会自动保存；入库后只能改描述，其他内容请在提交前核对好</div>
+      <div class="bar">
+        <button id="confirm">提交入库</button>
+        <button id="delete-checked" class="danger">删除所选</button>
+      </div>
+      <details id="skipped" hidden><summary></summary><div class="table-wrap"><table><tbody id="skipped-rows"></tbody></table></div></details>
+    </div>
+  </section>
+
+  <!-- ===== 交易 ===== -->
+  <section id="view-transactions" hidden>
+    <div class="card settings">
+      <label>来源<select id="tx-source"></select></label>
+      <label>从<input id="tx-from" type="date"></label>
+      <label>到<input id="tx-to" type="date"></label>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>日期</th><th>曜日</th><th>账户</th><th>币种</th><th class="num">金额</th><th>种类</th><th>描述</th><th>导出</th><th>来源</th></tr></thead>
+          <tbody id="tx-rows"></tbody>
+        </table>
+      </div>
+      <div class="bar"><span id="tx-status" class="status"></span></div>
+      <div class="legend">点一行查看原截图。入库后只能修改描述，改完自动保存</div>
+    </div>
+  </section>
+
+  <!-- ===== 导出 ===== -->
+  <section id="view-export" hidden>
+    <div class="card settings">
+      <label>来源<select id="ex-source"></select></label>
+      <label>从<input id="ex-from" type="date"></label>
+      <label>到<input id="ex-to" type="date"></label>
+      <label>显示<select id="ex-show">
+        <option value="all">全部</option>
+        <option value="new">只看未导出</option>
+      </select></label>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><input type="checkbox" id="ex-check-all" title="全选"></th><th>日期</th><th>曜日</th><th>账户</th><th>币种</th><th class="num">金额</th><th>种类</th><th>描述</th><th>导出过</th></tr></thead>
+          <tbody id="ex-rows"></tbody>
+        </table>
+      </div>
+      <div class="bar">
+        <button id="ex-go">导出 CSV</button>
+        <span id="ex-status" class="status"></span>
+      </div>
+      <div class="legend">默认勾选还没导出过的交易；导出过的也可以再勾选导出</div>
+    </div>
+    <div class="card">
+      <h2>导出记录</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>时间</th><th>文件名</th><th class="num">条数</th></tr></thead>
+          <tbody id="ex-history"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 登录记录 ===== -->
+  <section id="view-security" hidden>
+    <div class="card">
+      <h2>当前登录的设备</h2>
+      <div id="sec-off" class="empty" hidden>没有启用登录（TXREADER_AUTH=off），只适合在自己电脑上运行</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>登录时间</th><th>过期时间</th><th>IP</th><th>浏览器</th><th></th></tr></thead>
+          <tbody id="sec-sessions"></tbody>
+        </table>
+      </div>
+      <div class="bar"><button id="sec-logout-all" class="danger">让所有设备下线</button></div>
+    </div>
+    <div class="card">
+      <h2>最近的登录尝试</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>时间</th><th>结果</th><th>IP</th><th>浏览器</th></tr></thead>
+          <tbody id="sec-events"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
 </main>
 
 <aside id="viewer" aria-label="截图预览">
@@ -136,17 +253,71 @@ const SOURCES = {
   receipt: { hint: "点击或拖拽小票照片到这里（每张一笔，可多张）。店名是尽力识别的，请对照大图核对",
             defaults: { account: "现金", currency: "日元", category: "饮食费" } },
 };
+const SOURCE_LABELS = Object.fromEntries([...$("source").options].map(o => [o.value, o.textContent]));
 const GLOBAL_SETTINGS = ["source", "year", "order"];
 const SOURCE_SETTINGS = ["account", "currency", "category"]; // remembered separately per source
-let records = [];
-let nextId = 1; // stable row id, so focus survives re-sorting
-let images = [];   // uploaded screenshots: { id, name, url }
+let records = [];   // pending rows of the current source, as loaded from the server
+let skipped = [];   // rows of this session's uploads that were already in the books
+let images = [];    // screenshots uploaded in this session: { key, name, url }
 let nextImgId = 1;
-let viewing = null; // id of the screenshot shown in the viewer
-let session = 0;    // bumped on clear / source switch, so results of uploads still in flight are dropped
+let viewing = null; // key of the screenshot shown in the viewer
+let session = 0;    // bumped on source switch, so results of uploads still in flight are dropped
 
 const load = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const save = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+
+// ---------- shared helpers ----------
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, opts);
+  if (res.status === 401) { location.href = "/login"; throw new Error("请先登录"); }
+  const isJson = (res.headers.get("content-type") || "").includes("json");
+  const data = isJson ? await res.json() : res;
+  if (!res.ok) throw new Error((isJson && data.detail) || res.statusText);
+  return data;
+}
+const send = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const WEEKDAYS_JA = "日月火水木金土"; // indexed by Date.getDay()
+const fmtAmount = n => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const parseAmount = s => parseFloat(String(s).replace(/[,\s¥]/g, "")) || 0;
+const fmtTime = iso => iso ? new Date(iso).toLocaleString("zh-CN", { hour12: false }) : "";
+const pad = n => String(n).padStart(2, "0");
+
+// Accepts 2026/10/29 22:12:00, 2026-10-29 22:12, 2026/10/29 ...; returns normalized string or null
+function parseDate(s) {
+  const m = s.trim().match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (!m) return null;
+  const [y, mo, d, h = 0, mi = 0, se = 0] = m.slice(1).map(v => v === undefined ? undefined : +v);
+  const dt = new Date(y, mo - 1, d, h, mi, se);
+  if (dt.getMonth() !== mo - 1 || dt.getDate() !== d || h > 23 || mi > 59 || se > 59) return null;
+  return { date: `${y}/${pad(mo)}/${pad(d)} ${pad(h)}:${pad(mi)}:${pad(se)}`, weekday: WEEKDAYS_JA[dt.getDay()] };
+}
+
+function flash(el, msg) { $(el).textContent = msg; }
+
+// ---------- views ----------
+
+const VIEWS = ["recognize", "transactions", "export", "security"];
+function route() {
+  const view = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "recognize";
+  for (const v of VIEWS) $("view-" + v).hidden = v !== view;
+  for (const a of document.querySelectorAll("nav a")) a.classList.toggle("active", a.dataset.view === view);
+  showImage(null);
+  if (view === "recognize") loadPending();
+  if (view === "transactions") loadTransactions();
+  if (view === "export") { loadExportRows(); loadExportHistory(); }
+  if (view === "security") loadSecurity();
+}
+window.addEventListener("hashchange", route);
+
+$("logout").onclick = async () => {
+  await api("/api/logout", { method: "POST" }).catch(() => {});
+  location.href = "/login";
+};
+
+// ---------- recognize: settings ----------
 
 for (const k of GLOBAL_SETTINGS) {
   const v = load("tx." + k);
@@ -155,26 +326,66 @@ for (const k of GLOBAL_SETTINGS) {
 }
 if (!$("year").value) $("year").value = new Date().getFullYear();
 
+const defaultsFor = src => Object.fromEntries(SOURCE_SETTINGS.map(k =>
+  // "tx.<k>" is the pre-multi-source key, kept so existing WeChat settings carry over
+  [k, load(`tx.${src}.${k}`) ?? (src === "wechat" ? load("tx." + k) : null) ?? SOURCES[src].defaults[k]]));
+
 function applySource() {
   const src = $("source").value;
-  for (const k of SOURCE_SETTINGS) {
-    // "tx.<k>" is the pre-multi-source key, kept so existing WeChat settings carry over
-    $(k).value = load(`tx.${src}.${k}`) ?? (src === "wechat" ? load("tx." + k) : null) ?? SOURCES[src].defaults[k];
-  }
+  const d = defaultsFor(src);
+  for (const k of SOURCE_SETTINGS) $(k).value = d[k];
   $("drop").textContent = SOURCES[src].hint;
 }
 for (const k of SOURCE_SETTINGS) {
-  $(k).addEventListener("change", () => save(`tx.${$("source").value}.${k}`, $(k).value));
+  $(k).addEventListener("change", () => {
+    save(`tx.${$("source").value}.${k}`, $(k).value);
+    // Rows not edited by hand follow the default
+    for (const r of records) if (!r.own.has(k)) r[k] = $(k).value;
+    renderPending();
+  });
 }
 // Rows and screenshots of one source don't belong with another's, so start over on switch
-$("source").addEventListener("change", () => { clearAll(); applySource(); });
+$("source").addEventListener("change", () => { clearSession(); applySource(); loadPending(); });
 applySource();
+
+function updateCounts(counts) {
+  for (const o of $("source").options) {
+    const n = counts[o.value] || 0;
+    o.textContent = SOURCE_LABELS[o.value] + (n ? `（${n} 条待核对）` : "");
+  }
+}
 
 function sortRecords() {
   const dir = $("order").value === "desc" ? -1 : 1;
   records.sort((a, b) => dir * a.date.localeCompare(b.date));
 }
-$("order").addEventListener("change", () => { sortRecords(); render(); });
+$("order").addEventListener("change", () => { sortRecords(); renderPending(); });
+
+// ---------- recognize: pending rows ----------
+
+// Replace the table with the server's pending list, keeping checkboxes the user already set
+function setPending(rows) {
+  const prev = new Map(records.map(r => [r.id, r.checked]));
+  const d = { account: $("account").value, currency: $("currency").value, category: $("category").value };
+  records = rows.map(r => {
+    const own = new Set(SOURCE_SETTINGS.filter(k => k in r)); // values edited by hand earlier
+    return { ...d, ...r, own, checked: prev.get(r.id) ?? !r.suspect };
+  });
+  sortRecords();
+  renderPending();
+}
+
+async function loadPending() {
+  const mySession = session;
+  try {
+    const data = await api(`/api/pending?source=${$("source").value}`);
+    if (mySession !== session) return;
+    updateCounts(data.counts);
+    setPending(data.pending);
+  } catch (e) {
+    flash("status", "读取待核对失败：" + e.message);
+  }
+}
 
 const drop = $("drop");
 drop.onclick = () => $("file").click();
@@ -188,63 +399,53 @@ async function upload(files) {
   const fd = new FormData();
   for (const f of files) {
     fd.append("files", f);
-    images.push({ id: nextImgId++, name: f.name, url: URL.createObjectURL(f) });
+    images.push({ key: "local-" + nextImgId++, name: f.name, url: URL.createObjectURL(f) });
   }
   renderThumbs();
   fd.append("year", $("year").value);
   fd.append("source", $("source").value);
-  $("status").textContent = `识别中（${files.length} 张）…`;
+  flash("status", `识别中（${files.length} 张）…`);
   const mySession = session;
   try {
-    const res = await fetch("/api/parse", { method: "POST", body: fd });
-    const data = await res.json();
-    if (mySession !== session) return; // cleared or source switched while recognizing
-    if (!res.ok) throw new Error(data.detail || res.statusText);
-    const fresh = data.records.map(r => ({
-      ...r, account: $("account").value, currency: $("currency").value, category: $("category").value,
-    }));
-    // Skip rows already in the table from an earlier upload
-    const key = r => `${r.date}|${r.amount}|${r.merchant}|${r.balance}`;
-    const have = new Set(records.map(key));
-    const added = fresh.filter(r => !have.has(key(r))).map(r => ({ ...r, id: nextId++ }));
-    records = records.concat(added);
-    sortRecords();
-    $("status").textContent = `识别到 ${fresh.length} 条，新增 ${added.length} 条` +
-      (data.errors.length ? `；失败：${data.errors.join("；")}` : "");
-    render();
+    const data = await api("/api/parse", { method: "POST", body: fd });
+    if (mySession !== session) return; // source switched while recognizing
+    const c = data.counts;
+    skipped = skipped.concat(data.skipped);
+    setPending(data.pending);
+    flash("status", `识别到 ${c.recognized} 条：新增 ${c.new} 条` +
+      (c.suspect ? `，疑似重复 ${c.suspect} 条` : "") +
+      (c.merge ? `，${c.merge} 条已在待核对里` : "") +
+      (c.skip ? `，${c.skip} 条已入库（跳过）` : "") +
+      (data.errors.length ? `；失败：${data.errors.join("；")}` : ""));
+    loadCounts();
   } catch (e) {
     if (mySession !== session) return;
-    $("status").textContent = "出错了：" + e.message;
+    flash("status", "出错了：" + e.message);
   }
 }
-
-const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-
-const WEEKDAYS_JA = "日月火水木金土"; // indexed by Date.getDay()
-const byId = id => records.find(r => r.id === +id);
-const fmtAmount = n => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const parseAmount = s => parseFloat(String(s).replace(/[,\s¥]/g, "")) || 0;
-
-// Accepts 2026/10/29 22:12:00, 2026-10-29 22:12, 2026/10/29 ...; returns normalized string or null
-function parseDate(s) {
-  const m = s.trim().match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
-  if (!m) return null;
-  const [y, mo, d, h = 0, mi = 0, se = 0] = m.slice(1).map(v => v === undefined ? undefined : +v);
-  const dt = new Date(y, mo - 1, d, h, mi, se);
-  if (dt.getMonth() !== mo - 1 || dt.getDate() !== d || h > 23 || mi > 59 || se > 59) return null;
-  const p = n => String(n).padStart(2, "0");
-  return { date: `${y}/${p(mo)}/${p(d)} ${p(h)}:${p(mi)}:${p(se)}`, weekday: WEEKDAYS_JA[dt.getDay()] };
+async function loadCounts() {
+  try { updateCounts((await api(`/api/pending?source=${$("source").value}`)).counts); } catch {}
 }
 
-function render() {
+const byId = id => records.find(r => r.id === +id);
+
+function suspectTip(s) {
+  return `疑似重复：与${s.confirmed ? "已入库" : "待核对"}的「${s.date} ${fmtAmount(s.amount)} ${s.merchant}」` +
+    "日期和金额相同、商户不同。确认是重复就删除这一行";
+}
+
+function renderPending() {
   // Remember which cell had focus so it can be restored after rebuilding the table
   const active = document.activeElement?.dataset ?? {};
-  $("result").hidden = records.length === 0;
+  $("result").hidden = records.length === 0 && skipped.length === 0;
+  $("no-pending").hidden = records.length > 0;
   $("rows").innerHTML = records.map((r, i) => {
     const warn = r.year_guessed || r.sign_guessed;
     const tip = [r.year_guessed && "日期为推测", r.sign_guessed && "正负号为推测"].filter(Boolean).join("，");
     const newDay = i > 0 && r.date.slice(0, 10) !== records[i - 1].date.slice(0, 10);
-    return `<tr class="${r.amount > 0 ? "income" : ""} ${warn ? "warn" : ""} ${newDay ? "newday" : ""}">
+    const imgKey = "srv-" + r.image_id;
+    return `<tr class="${r.amount > 0 ? "income" : ""} ${r.suspect ? "suspect" : ""} ${warn ? "warn" : ""} ${newDay ? "newday" : ""}">
+      <td><input type="checkbox" data-check="${r.id}" ${r.checked ? "checked" : ""}></td>
       <td class="date"><input data-id="${r.id}" data-k="date" value="${esc(r.date)}" class="${r.year_guessed ? "guess" : ""}" title="${r.year_guessed ? "日期为推测，请核对" : ""}"></td>
       <td>${esc(r.weekday)}</td>
       <td><input data-id="${r.id}" data-k="account" value="${esc(r.account)}"></td>
@@ -252,36 +453,62 @@ function render() {
       <td class="amt"><input data-id="${r.id}" data-k="amount" value="${fmtAmount(r.amount)}"></td>
       <td><input data-id="${r.id}" data-k="category" value="${esc(r.category)}"></td>
       <td><input data-id="${r.id}" data-k="merchant" value="${esc(r.merchant)}"></td>
-      <td class="flag" title="${tip}">${warn ? "⚠" : ""}</td>
+      <td class="flag" title="${esc(r.suspect ? suspectTip(r.suspect) : tip)}">${warn ? "⚠" : ""}${r.suspect ? ' <span class="tag">疑似重复</span>' : ""}</td>
+      <td><button class="icon ${viewing === imgKey ? "active" : ""}" data-view-img="${r.image_id}" data-name="${esc(r.image_name)}" title="查看原截图" tabindex="-1">🖼</button></td>
       <td><button class="secondary" data-del="${r.id}" tabindex="-1">删除</button></td></tr>`;
   }).join("");
+  const n = records.filter(r => r.checked).length;
+  $("check-all").checked = n > 0 && n === records.length;
+  $("check-all").indeterminate = n > 0 && n < records.length;
+  $("confirm").textContent = `提交入库（${n} 条）`;
+  $("confirm").disabled = $("delete-checked").disabled = n === 0;
+  $("skipped").hidden = skipped.length === 0;
+  $("skipped").querySelector("summary").textContent = `已入库，跳过 ${skipped.length} 条`;
+  $("skipped-rows").innerHTML = skipped.map(s =>
+    `<tr><td>${esc(s.date)}</td><td class="num">${fmtAmount(s.amount)}</td><td>${esc(s.merchant)}</td></tr>`).join("");
   if (active.id && active.k) $("rows").querySelector(`input[data-id="${active.id}"][data-k="${active.k}"]`)?.focus();
+}
+
+// Edits are saved to the server as a draft, so they survive a reload
+async function saveDraft(r, fields) {
+  try {
+    await api(`/api/pending/${r.id}`, send("PATCH", fields));
+  } catch (e) {
+    flash("status", "保存修改失败：" + e.message);
+  }
 }
 
 $("rows").addEventListener("input", e => {
   const { id, k } = e.target.dataset;
-  if (!id || k === "date") return; // dates are applied on change, once complete
+  if (!id || !k || k === "date") return; // dates are applied on change, once complete
   byId(id)[k] = k === "amount" ? parseAmount(e.target.value) : e.target.value;
 });
 $("rows").addEventListener("change", e => {
+  const check = e.target.dataset.check;
+  if (check) { byId(check).checked = e.target.checked; renderPending(); return; }
   const { id, k } = e.target.dataset;
   const r = id && byId(id);
-  if (!r) return;
+  if (!r || !k) return;
   if (k === "amount") {
     // Update in place (a full re-render isn't needed)
     e.target.value = fmtAmount(r.amount);
     e.target.closest("tr").classList.toggle("income", r.amount > 0);
+    saveDraft(r, { amount: r.amount });
   } else if (k === "date") {
     const parsed = parseDate(e.target.value);
     if (!parsed) {
       e.target.classList.add("invalid");
-      $("status").textContent = `日期格式不对：「${e.target.value}」，应为 2026/10/29 22:12:00`;
+      flash("status", `日期格式不对：「${e.target.value}」，应为 2026/10/29 22:12:00`);
       return;
     }
     Object.assign(r, parsed, { year_guessed: false }); // user has checked this date
-    $("status").textContent = "";
+    flash("status", "");
+    saveDraft(r, { date: r.date });
     sortRecords();
-    render();
+    renderPending();
+  } else {
+    r.own.add(k);
+    saveDraft(r, { [k]: r[k] });
   }
 });
 // Enter: same column, next row (Shift+Enter: previous row). Tab moves right natively.
@@ -297,41 +524,80 @@ $("rows").addEventListener("keydown", e => {
 // Select the whole cell when tabbing/clicking in, like a spreadsheet
 $("rows").addEventListener("focusin", e => { if (e.target.dataset.k) e.target.select(); });
 $("rows").addEventListener("click", e => {
+  const img = e.target.closest("[data-view-img]");
+  if (img) return toggleServerImage(+img.dataset.viewImg, img.dataset.name);
   const id = e.target.dataset.del;
-  if (id !== undefined) { records = records.filter(r => r.id !== +id); render(); }
+  if (id !== undefined) deletePending([+id]);
 });
-function clearAll() {
+$("check-all").onchange = e => { for (const r of records) r.checked = e.target.checked; renderPending(); };
+
+async function deletePending(ids) {
+  try {
+    await api("/api/pending/delete", send("POST", { ids }));
+    records = records.filter(r => !ids.includes(r.id));
+    renderPending();
+    loadCounts();
+  } catch (e) {
+    flash("status", "删除失败：" + e.message);
+  }
+}
+$("delete-checked").onclick = () => {
+  const ids = records.filter(r => r.checked).map(r => r.id);
+  if (ids.length && confirm(`删除勾选的 ${ids.length} 条待核对记录？`)) deletePending(ids);
+};
+
+$("confirm").onclick = async () => {
+  const rows = records.filter(r => r.checked);
+  if ($("rows").querySelector("input.invalid")) {
+    if (!confirm("有日期格式不对的行，这些行会按原来的日期提交。继续吗？")) return;
+  }
+  $("confirm").disabled = true;
+  try {
+    const { confirmed } = await api("/api/confirm", send("POST", { rows: rows.map(r => ({
+      id: r.id, date: r.date, account: r.account, currency: r.currency, amount: r.amount,
+      category: r.category, description: r.merchant,
+    })) }));
+    flash("status", `已入库 ${confirmed} 条`);
+    await loadPending();
+  } catch (e) {
+    flash("status", "提交失败：" + e.message);
+    renderPending();
+  }
+};
+
+function clearSession() {
   session++;
   records = [];
+  skipped = [];
   for (const im of images) URL.revokeObjectURL(im.url);
   images = [];
   showImage(null);
-  $("status").textContent = "";
-  render();
+  flash("status", "");
+  renderPending();
 }
-$("clear").onclick = clearAll;
+
+// ---------- screenshot viewer ----------
 
 // Uploaded screenshots: thumbnails under the drop zone, click to view on the right
 function renderThumbs() {
   $("thumbs").innerHTML = images.map(im =>
     `<div class="thumb">` +
-    `<button class="thumb-open ${im.id === viewing ? "active" : ""}" data-img="${im.id}" title="${esc(im.name)}">` +
+    `<button class="thumb-open ${im.key === viewing ? "active" : ""}" data-img="${im.key}" title="${esc(im.name)}">` +
     `<img src="${im.url}" alt="${esc(im.name)}"></button>` +
-    `<button class="thumb-del" data-img-del="${im.id}" title="删除这张截图（已识别的记录保留）" aria-label="删除截图">×</button>` +
+    `<button class="thumb-del" data-img-del="${im.key}" title="从这里移除（已识别的记录保留）" aria-label="移除截图">×</button>` +
     `</div>`).join("");
 }
-// Removes only the screenshot; rows already recognized from it stay in the table
-function removeImage(id) {
-  const im = images.find(i => i.id === id);
+function removeImage(key) {
+  const im = images.find(i => i.key === key);
   if (!im) return;
   URL.revokeObjectURL(im.url);
   images = images.filter(i => i !== im);
-  if (viewing === id) showImage(null);
+  if (viewing === key) showImage(null);
   else renderThumbs();
 }
-function showImage(id) {
-  const im = images.find(i => i.id === id);
-  viewing = im ? id : null;
+// im: { key, name, url } or null to close
+function showImage(im) {
+  viewing = im ? im.key : null;
   document.body.classList.toggle("viewing", !!im);
   if (im) {
     $("viewer-img").src = im.url;
@@ -340,28 +606,162 @@ function showImage(id) {
     $("viewer").scrollTop = 0;
   }
   renderThumbs();
+  for (const b of document.querySelectorAll("[data-view-img]")) b.classList.toggle("active", viewing === "srv-" + b.dataset.viewImg);
+  for (const tr of document.querySelectorAll("tr[data-img-id]")) tr.classList.toggle("viewing", viewing === "srv-" + tr.dataset.imgId);
+}
+function toggleServerImage(id, name) {
+  const key = "srv-" + id;
+  showImage(viewing === key ? null : { key, name: name || `截图 #${id}`, url: `/api/images/${id}` });
 }
 $("thumbs").addEventListener("click", e => {
-  const del = +e.target.closest("[data-img-del]")?.dataset.imgDel;
+  const del = e.target.closest("[data-img-del]")?.dataset.imgDel;
   if (del) return removeImage(del);
-  const id = +e.target.closest("[data-img]")?.dataset.img;
-  if (id) showImage(id === viewing ? null : id); // clicking the open one closes it
+  const key = e.target.closest("[data-img]")?.dataset.img;
+  if (key) showImage(key === viewing ? null : images.find(i => i.key === key)); // clicking the open one closes it
 });
 $("viewer-close").onclick = () => showImage(null);
 document.addEventListener("keydown", e => { if (e.key === "Escape" && viewing) showImage(null); });
 
-$("export").onclick = () => {
-  const cell = v => /[",\n]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : v;
-  const lines = [["日期", "曜日", "账户", "币种", "金额", "种类", "描述"]].concat(records.map(r =>
-    [r.date, r.weekday, r.account, r.currency, r.amount.toFixed(2), r.category, r.merchant]));
-  const csv = "﻿" + lines.map(l => l.map(cell).join(",")).join("\r\n") + "\r\n";
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-  const now = new Date(), p = n => String(n).padStart(2, "0");
-  a.download = `txreader_${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}_${p(now.getHours())}${p(now.getMinutes())}.csv`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+// ---------- transactions ----------
+
+for (const p of ["tx", "ex"]) {
+  $(p + "-source").innerHTML = `<option value="">全部来源</option>` +
+    Object.entries(SOURCE_LABELS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("");
+}
+function filterQuery(p) {
+  const q = new URLSearchParams();
+  if ($(p + "-source").value) q.set("source", $(p + "-source").value);
+  if ($(p + "-from").value) q.set("date_from", $(p + "-from").value);
+  if ($(p + "-to").value) q.set("date_to", $(p + "-to").value);
+  return q.toString();
+}
+const sum = rows => rows.reduce((s, t) => s + t.amount, 0);
+
+let txRows = [];
+async function loadTransactions() {
+  try {
+    txRows = (await api("/api/transactions?" + filterQuery("tx"))).transactions;
+  } catch (e) {
+    return flash("tx-status", "读取失败：" + e.message);
+  }
+  $("tx-rows").innerHTML = txRows.map(t => `<tr class="clickable" data-img-id="${t.image_id}" data-name="${esc(t.image_name)}" title="点击查看原截图">
+    <td>${esc(t.date)}</td><td>${esc(t.weekday)}</td><td>${esc(t.account)}</td><td>${esc(t.currency)}</td>
+    <td class="num">${fmtAmount(t.amount)}</td><td>${esc(t.category)}</td>
+    <td><input data-tx="${t.id}" data-k="description" value="${esc(t.description)}"></td>
+    <td>${t.export_count ? `<span class="tag done" title="最近一次：${esc(fmtTime(t.last_export))}">已导出${t.export_count > 1 ? " ×" + t.export_count : ""}</span>` : ""}</td>
+    <td>${esc(SOURCE_LABELS[t.source]?.split(" · ")[0] ?? t.source)}</td></tr>`).join("");
+  flash("tx-status", txRows.length ? `共 ${txRows.length} 条` : "没有符合条件的交易");
+}
+for (const id of ["tx-source", "tx-from", "tx-to"]) $(id).addEventListener("change", loadTransactions);
+$("tx-rows").addEventListener("change", async e => {
+  const id = e.target.dataset.tx;
+  if (!id) return;
+  try {
+    await api(`/api/transactions/${id}`, send("PATCH", { description: e.target.value }));
+    flash("tx-status", "描述已保存");
+  } catch (err) {
+    flash("tx-status", "保存失败：" + err.message);
+  }
+});
+$("tx-rows").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.isComposing && e.target.dataset.tx) e.target.blur();
+});
+$("tx-rows").addEventListener("click", e => {
+  if (e.target.closest("input")) return;
+  const tr = e.target.closest("tr[data-img-id]");
+  if (tr) toggleServerImage(+tr.dataset.imgId, tr.dataset.name);
+});
+
+// ---------- export ----------
+
+let exRows = [];
+let exChecked = new Map(); // id -> checked, kept while filters change
+async function loadExportRows() {
+  try {
+    exRows = (await api("/api/transactions?" + filterQuery("ex"))).transactions;
+  } catch (e) {
+    return flash("ex-status", "读取失败：" + e.message);
+  }
+  if ($("ex-show").value === "new") exRows = exRows.filter(t => !t.export_count);
+  for (const t of exRows) if (!exChecked.has(t.id)) exChecked.set(t.id, !t.export_count);
+  renderExportRows();
+}
+function renderExportRows() {
+  $("ex-rows").innerHTML = exRows.map(t => `<tr class="${t.export_count ? "exported" : ""}">
+    <td><input type="checkbox" data-ex="${t.id}" ${exChecked.get(t.id) ? "checked" : ""}></td>
+    <td>${esc(t.date)}</td><td>${esc(t.weekday)}</td><td>${esc(t.account)}</td><td>${esc(t.currency)}</td>
+    <td class="num">${fmtAmount(t.amount)}</td><td>${esc(t.category)}</td><td class="wrap">${esc(t.description)}</td>
+    <td>${t.export_count ? `${t.export_count} 次，最近 ${esc(fmtTime(t.last_export))}` : ""}</td></tr>`).join("") ||
+    `<tr><td colspan="9" class="empty">没有符合条件的交易</td></tr>`;
+  const picked = exRows.filter(t => exChecked.get(t.id));
+  $("ex-check-all").checked = picked.length > 0 && picked.length === exRows.length;
+  $("ex-check-all").indeterminate = picked.length > 0 && picked.length < exRows.length;
+  $("ex-go").textContent = `导出 CSV（${picked.length} 条）`;
+  $("ex-go").disabled = picked.length === 0;
+}
+for (const id of ["ex-source", "ex-from", "ex-to", "ex-show"]) $(id).addEventListener("change", loadExportRows);
+$("ex-rows").addEventListener("change", e => {
+  if (e.target.dataset.ex) { exChecked.set(+e.target.dataset.ex, e.target.checked); renderExportRows(); }
+});
+$("ex-check-all").onchange = e => { for (const t of exRows) exChecked.set(t.id, e.target.checked); renderExportRows(); };
+
+$("ex-go").onclick = async () => {
+  const ids = exRows.filter(t => exChecked.get(t.id)).map(t => t.id);
+  const now = new Date();
+  const filename = `txreader_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}.csv`;
+  $("ex-go").disabled = true;
+  try {
+    const res = await api("/api/exports", send("POST", { ids, filename }));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(await res.blob());
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    flash("ex-status", `已导出 ${ids.length} 条`);
+    exChecked = new Map(); // back to the default: tick what hasn't been exported
+    loadExportRows();
+    loadExportHistory();
+  } catch (e) {
+    flash("ex-status", "导出失败：" + e.message);
+    renderExportRows();
+  }
 };
+
+async function loadExportHistory() {
+  try {
+    const { exports } = await api("/api/exports");
+    $("ex-history").innerHTML = exports.map(x =>
+      `<tr><td>${esc(fmtTime(x.at))}</td><td>${esc(x.filename)}</td><td class="num">${x.count}</td></tr>`).join("") ||
+      `<tr><td colspan="3" class="empty">还没有导出过</td></tr>`;
+  } catch {}
+}
+
+// ---------- security ----------
+
+const REASONS = { ok: "成功", bad_password: "密码错误", locked: "被锁定（错误次数太多）", not_configured: "服务器未设置密码" };
+async function loadSecurity() {
+  let data;
+  try { data = await api("/api/security"); } catch { return; }
+  $("logout").hidden = !data.auth;
+  $("sec-off").hidden = data.auth;
+  $("sec-logout-all").hidden = !data.auth;
+  $("sec-sessions").innerHTML = data.sessions.map(s =>
+    `<tr><td>${esc(fmtTime(s.created_at))}</td><td>${esc(fmtTime(s.expires_at))}</td><td>${esc(s.ip)}</td>` +
+    `<td class="wrap">${esc(s.user_agent)}</td><td>${s.current ? '<span class="tag done">本机</span>' : ""}</td></tr>`).join("");
+  $("sec-events").innerHTML = data.events.map(ev =>
+    `<tr><td>${esc(fmtTime(ev.at))}</td><td>${ev.success ? "" : "❌ "}${esc(REASONS[ev.reason] ?? ev.reason)}</td>` +
+    `<td>${esc(ev.ip)}</td><td class="wrap">${esc(ev.user_agent)}</td></tr>`).join("") ||
+    `<tr><td colspan="4" class="empty">没有记录</td></tr>`;
+}
+$("sec-logout-all").onclick = async () => {
+  if (!confirm("所有设备（包括这台）都会退出登录，需要重新输入密码。继续吗？")) return;
+  await api("/api/logout-all", { method: "POST" }).catch(() => {});
+  location.href = "/login";
+};
+
+// Show the logout button only when login is on
+api("/api/security").then(d => { $("logout").hidden = !d.auth; }).catch(() => {});
+route();
 </script>
 </body>
 </html>
