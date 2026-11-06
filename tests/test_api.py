@@ -1,10 +1,13 @@
 """The web API end to end, with a fake parser (no OCR) and a throwaway data directory."""
+from datetime import datetime, timedelta, timezone
+
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
 import app as webapp
 from txreader import auth, store
+from txreader.db import connect
 from txreader.models import Tx
 
 # Each fake "screenshot" is a key into this table
@@ -89,13 +92,16 @@ def test_transactions_and_exports(client):
     assert [t["description"] for t in txs] == ["便利店", "超市"]
     assert all(t["export_count"] == 0 and t["source"] == "wechat" for t in txs)
 
-    # Only the description can change after confirming
-    assert client.patch(f"/api/transactions/{txs[0]['id']}", json={"description": 'Shop, "A"'}).is_success
+    # Only the category and description can change after confirming
+    tx_url = f"/api/transactions/{txs[0]['id']}"
+    assert client.patch(tx_url, json={"description": 'Shop, "A"'}).is_success
+    assert client.patch(tx_url, json={"category": "日用品"}).is_success
+    assert client.patch(tx_url, json={"amount": 5}).status_code == 400
 
     r = client.post("/api/exports", json={"ids": [t["id"] for t in txs], "filename": "out.csv"})
     assert r.content.decode("utf-8") == (
         "﻿日期,曜日,账户,币种,金额,种类,描述\r\n"
-        '2026/10/01 12:00:00,木,微信,人民币,-10.00,饮食费,"Shop, ""A"""\r\n'
+        '2026/10/01 12:00:00,木,微信,人民币,-10.00,日用品,"Shop, ""A"""\r\n'
         "2026/10/02 09:00:00,金,微信,人民币,-20.00,饮食费,超市\r\n")
     client.post("/api/exports", json={"ids": [txs[0]["id"]]})  # exporting again is allowed
     txs = client.get("/api/transactions").json()["transactions"]
@@ -138,3 +144,28 @@ def test_login_lockout_and_sessions(client, monkeypatch):
     assert len(sec["sessions"]) == 1 and sec["sessions"][0]["current"]
     client.post("/api/logout-all")
     assert client.get("/api/exports").status_code == 401
+
+
+def test_idle_session_expires(client, monkeypatch):
+    monkeypatch.setenv("TXREADER_AUTH", "on")
+    monkeypatch.setenv("TXREADER_PASSWORD_HASH", auth.hash_password(PASSWORD))
+    monkeypatch.setenv("TXREADER_IDLE_MINUTES", "30")
+    assert client.post("/api/login", json={"password": PASSWORD}).is_success
+    assert client.get("/api/exports").is_success
+
+    def idle_for(minutes):
+        with connect() as conn:
+            conn.execute("UPDATE sessions SET last_seen_at = ?",
+                         ((datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat(timespec="seconds"),))
+
+    idle_for(20)  # still within the limit, and the request keeps it alive
+    assert client.get("/api/exports").is_success
+    with connect() as conn:
+        seen = datetime.fromisoformat(conn.execute("SELECT last_seen_at FROM sessions").fetchone()[0])
+    assert datetime.now(timezone.utc) - seen < timedelta(minutes=1)
+
+    idle_for(31)
+    assert client.get("/api/exports").status_code == 401
+    with connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+

@@ -72,6 +72,7 @@
   td.date input { width:160px; padding:4px; font-variant-numeric:tabular-nums; }
   td input[data-k="currency"] { width:60px; min-width:60px; }
   td input[data-k="merchant"], td input[data-k="description"] { min-width:180px; }
+  td input[data-tx][data-k="category"] { min-width:90px; }
   td button { padding:4px 10px; }
   td button.icon { padding:2px 6px; background:none; color:var(--muted); font-size:15px; }
   td button.icon:hover { color:var(--text); background:var(--line); }
@@ -122,7 +123,7 @@
       <label>账户<input id="account" value="微信"></label>
       <label>币种<input id="currency" value="人民币"></label>
       <label>默认种类<input id="category" value="饮食费"></label>
-      <label>年份（截图看不到年份时使用）<input id="year" type="number"></label>
+      <label>年份<input id="year" type="number"></label>
       <label>日期排序<select id="order">
         <option value="asc">正序（旧 → 新）</option>
         <option value="desc">倒序（新 → 旧）</option>
@@ -164,7 +165,7 @@
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>日期</th><th>曜日</th><th>账户</th><th>币种</th><th class="num">金额</th><th>种类</th><th>描述</th><th>导出</th><th>来源</th></tr></thead>
+          <thead><tr><th>日期</th><th>曜日</th><th>账户</th><th>币种</th><th class="num">金额</th><th>种类</th><th>描述</th><th>导出</th></tr></thead>
           <tbody id="tx-rows"></tbody>
         </table>
       </div>
@@ -215,7 +216,7 @@
       <div id="sec-off" class="empty" hidden>没有启用登录（TXREADER_AUTH=off），只适合在自己电脑上运行</div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>登录时间</th><th>过期时间</th><th>IP</th><th>浏览器</th><th></th></tr></thead>
+          <thead><tr><th>登录时间</th><th>最近活动</th><th>到期时间</th><th>IP</th><th>浏览器</th><th></th></tr></thead>
           <tbody id="sec-sessions"></tbody>
         </table>
       </div>
@@ -646,19 +647,21 @@ async function loadTransactions() {
   }
   $("tx-rows").innerHTML = txRows.map(t => `<tr class="clickable" data-img-id="${t.image_id}" data-name="${esc(t.image_name)}" title="点击查看原截图">
     <td>${esc(t.date)}</td><td>${esc(t.weekday)}</td><td>${esc(t.account)}</td><td>${esc(t.currency)}</td>
-    <td class="num">${fmtAmount(t.amount)}</td><td>${esc(t.category)}</td>
+    <td class="num">${fmtAmount(t.amount)}</td>
+    <td><input data-tx="${t.id}" data-k="category" value="${esc(t.category)}"></td>
     <td><input data-tx="${t.id}" data-k="description" value="${esc(t.description)}"></td>
-    <td>${t.export_count ? `<span class="tag done" title="最近一次：${esc(fmtTime(t.last_export))}">已导出${t.export_count > 1 ? " ×" + t.export_count : ""}</span>` : ""}</td>
-    <td>${esc(SOURCE_LABELS[t.source]?.split(" · ")[0] ?? t.source)}</td></tr>`).join("");
+    <td>${t.export_count ? `<span class="tag done" title="最近一次：${esc(fmtTime(t.last_export))}">已导出${t.export_count > 1 ? " ×" + t.export_count : ""}</span>` : ""}</td></tr>`).join("");
   flash("tx-status", txRows.length ? `共 ${txRows.length} 条` : "没有符合条件的交易");
 }
 for (const id of ["tx-source", "tx-from", "tx-to"]) $(id).addEventListener("change", loadTransactions);
 $("tx-rows").addEventListener("change", async e => {
-  const id = e.target.dataset.tx;
+  const { tx: id, k } = e.target.dataset;
   if (!id) return;
   try {
-    await api(`/api/transactions/${id}`, send("PATCH", { description: e.target.value }));
-    flash("tx-status", "描述已保存");
+    await api(`/api/transactions/${id}`, send("PATCH", { [k]: e.target.value }));
+    const t = txRows.find(t => t.id === +id);
+    if (t) t[k] = e.target.value;
+    flash("tx-status", (k === "category" ? "种类" : "描述") + "已保存");
   } catch (err) {
     flash("tx-status", "保存失败：" + err.message);
   }
@@ -746,7 +749,8 @@ async function loadSecurity() {
   $("sec-off").hidden = data.auth;
   $("sec-logout-all").hidden = !data.auth;
   $("sec-sessions").innerHTML = data.sessions.map(s =>
-    `<tr><td>${esc(fmtTime(s.created_at))}</td><td>${esc(fmtTime(s.expires_at))}</td><td>${esc(s.ip)}</td>` +
+    `<tr><td>${esc(fmtTime(s.created_at))}</td><td>${esc(fmtTime(s.last_seen_at))}</td>` +
+    `<td title="一段时间不操作会自动退出登录，继续使用会顺延">${esc(fmtTime(s.ends_at))}</td><td>${esc(s.ip)}</td>` +
     `<td class="wrap">${esc(s.user_agent)}</td><td>${s.current ? '<span class="tag done">本机</span>' : ""}</td></tr>`).join("");
   $("sec-events").innerHTML = data.events.map(ev =>
     `<tr><td>${esc(fmtTime(ev.at))}</td><td>${ev.success ? "" : "❌ "}${esc(REASONS[ev.reason] ?? ev.reason)}</td>` +

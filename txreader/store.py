@@ -231,10 +231,17 @@ def list_transactions(source: str | None = None, date_from: str | None = None,
     return [dict(r) for r in rows]
 
 
-def update_description(tx_id: int, description: str) -> None:
+TX_EDITABLE = ("category", "description")  # once stored, only these can still change
+
+
+def update_transaction(tx_id: int, changes: dict) -> None:
+    fields = {k: str(v) for k, v in changes.items() if k in TX_EDITABLE and v is not None}
+    if not fields:
+        raise ValueError("没有可修改的字段")
     with connect() as conn:
-        n = conn.execute("UPDATE transactions SET description = ?, updated_at = ? WHERE id = ?",
-                         (str(description), now(), tx_id)).rowcount
+        n = conn.execute(
+            "UPDATE transactions SET " + ", ".join(f"{k} = ?" for k in fields) + ", updated_at = ? WHERE id = ?",
+            (*fields.values(), now(), tx_id)).rowcount
     if not n:
         raise NotFound(tx_id)
 

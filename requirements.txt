@@ -2,6 +2,7 @@ rapidocr>=3.0
 onnxruntime
 fastapi
 uvicorn
+python-dotenv
 python-multipart
 pytest
 httpx  # tests only (FastAPI TestClient)

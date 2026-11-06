@@ -11,7 +11,7 @@ app.py                    FastAPI：页面、登录检查（中间件）、全�
 txreader/db.py            SQLite 表结构、连接、截图存成 WebP（数据目录 TXREADER_DATA，默认 data/）
 txreader/store.py         识别入库流程、待核对行、确认入库、交易、导出 CSV
 txreader/matching.py      新识别的行与库里已有行比对（跳过 / 合并 / 疑似重复 / 新增）
-txreader/auth.py          单用户密码登录、会话、登录记录、错误次数锁定；`python -m txreader.auth` 生成密码哈希
+txreader/auth.py          单用户密码登录、会话（闲置超时 + 30 天上限）、登录记录、错误次数锁定；`python -m txreader.auth` 生成密码哈希（填到 `.env`）
 txreader/ocr.py           RapidOCR 封装：图片 -> Box(text, x0, y0, x1, y1, score, angle)
 txreader/parsers/         每个来源一个解析器，parse_boxes(boxes, img) -> (list[Tx], warnings)
   __init__.py             PARSERS 注册表（来源 key -> 解析器）
@@ -37,7 +37,7 @@ tests/test_samples.py     用 samples/ 里的真实截图对照期望结果（�
 - 去重：只去掉**不同截图之间**的重复（滚动截图会重叠），同一张截图里两笔一模一样的交易都保留；有余额时用余额区分。
 - 每个来源的解析器顶部 docstring 画出该截图的版式，改解析器前先看它。示例里的商户名都用「某某商户」这类占位。
 - 代码注释用英文，界面文字、README、提交信息用中文。
-- `ocr_rows` 里的识别原始值不改，比对只用它们；待核对时的修改存在 `draft`（JSON）里。入库后只能改描述。没有「忽略」状态，不要的待核对行直接删除。
+- `ocr_rows` 里的识别原始值不改，比对只用它们；待核对时的修改存在 `draft`（JSON）里。入库后只能改种类和描述。没有「忽略」状态，不要的待核对行直接删除。
 
 ### 新增一个来源时要改
 

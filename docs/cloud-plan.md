@@ -27,7 +27,7 @@
 - `id`, `ocr_row_id`（可追溯到原截图）
 - CSV 各列：`date`, `weekday`, `account`, `currency`, `amount`, `category`, `description`
 - `confirmed_at`, `updated_at`
-- 入库后只能改 `description`（描述），其他字段（包括种类）要在提交前核对好
+- 入库后只能改 `category`（种类）和 `description`（描述），其他字段要在提交前核对好
 
 **exports** / **export_items**：导出记录
 - 每次导出一条（时间、文件名、条数），以及这次导出了哪些交易
@@ -35,7 +35,7 @@
 
 **login_events**：登录记录，`at`, `ip`, `user_agent`, `success`（失败的也记）
 
-**sessions**：登录会话，存 token 哈希、创建 / 过期时间、IP，可以让所有会话下线
+**sessions**：登录会话，存 token 哈希、创建 / 过期 / 最近活动时间、IP，可以让所有会话下线
 
 ## 判断「已有」的规则
 
@@ -53,7 +53,7 @@
 
 - **登录页**：只有密码框。密码哈希放在环境变量里，连续失败后暂时锁定
 - **识别页**（现在的主页）：上传 → 显示待核对的行（包括以前没提交的）→ 勾选 → 提交入库
-- **交易页**：已入库交易，按来源和日期筛选，只能改描述，点一行能看到原截图
+- **交易页**：已入库交易，按来源和日期筛选，只能改种类和描述，点一行能看到原截图
 - **导出页**：选择交易导出 CSV，默认勾选未导出的，标出已导出过的
 
 ## 实施步骤
@@ -70,8 +70,8 @@
 - `images.parsed`：存解析器的原始结果（JSON），同一张图再传时直接用它，不用再 OCR。同一张图换了来源上传时会重新识别
 - `ocr_rows.suspect_of`：疑似重复时指向那一行；`ocr_rows.draft`：待核对时的修改（JSON），提交时才写进 `transactions`
 - `login_events.reason`：`ok` / `bad_password` / `locked` / `not_configured`。只有 `bad_password` 计入锁定：连续 5 次（中间没有成功）且都在 15 分钟内，锁定到第一次失败后 15 分钟
-- 密码哈希格式 `scrypt:n:r:p:salt:hash`，用 `python -m txreader.auth` 生成；`TXREADER_AUTH=off` 关闭登录（只用于本机）
-- 会话 30 天过期，cookie 为 HttpOnly + SameSite=Lax，HTTPS 下加 Secure
+- 密码哈希写在 `.env` 的 `TXREADER_PASSWORD_HASH`，格式 `scrypt:n:r:p:salt:hash`，用 `python -m txreader.auth` 生成；`TXREADER_AUTH=off` 关闭登录（只用于本机）
+- 会话 2 小时不操作就过期（`TXREADER_IDLE_MINUTES` 可改），最长 30 天；cookie 为 HttpOnly + SameSite=Lax，HTTPS 下加 Secure
 - 「疑似重复」的行默认不勾选；确认是重复的就删除该待核对行（没有「忽略」状态，删掉后再传同一张图会重新出现）
 - 导出的 CSV 在服务器生成，格式不变
 

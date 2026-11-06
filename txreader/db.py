@@ -90,7 +90,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     id         INTEGER PRIMARY KEY,
     token_hash TEXT NOT NULL UNIQUE,    -- sha256 of the cookie value
     created_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,           -- hard limit, however active the session is
+    last_seen_at TEXT,                  -- last request; idle too long and the session ends
     ip         TEXT,
     user_agent TEXT
 );
@@ -108,6 +109,14 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _migrate(conn) -> None:
+    """Bring databases created by older versions up to SCHEMA."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(sessions)")}
+    if "last_seen_at" not in cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN last_seen_at TEXT")
+        conn.execute("UPDATE sessions SET last_seen_at = created_at")
+
+
 @contextmanager
 def connect():
     """A connection that commits on success and rolls back on error."""
@@ -122,6 +131,7 @@ def connect():
         if path not in _initialized:
             conn.execute("PRAGMA journal_mode = WAL")
             conn.executescript(SCHEMA)
+            _migrate(conn)
             _initialized.add(path)
         yield conn
         conn.commit()

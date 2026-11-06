@@ -2,6 +2,7 @@
 
     TXREADER_PASSWORD_HASH   output of `python -m txreader.auth`
     TXREADER_AUTH=off        no login at all (only for running on your own machine)
+    TXREADER_IDLE_MINUTES    log out after this long without a request (default 120)
 
 Run `python -m txreader.auth` to turn a password into a hash.
 """
@@ -16,7 +17,9 @@ from datetime import datetime, timedelta, timezone
 from .db import connect, now
 
 COOKIE = "txreader_session"
-SESSION_DAYS = 30
+SESSION_DAYS = 30                   # hard limit, even for a session in constant use
+DEFAULT_IDLE_MINUTES = 120          # ... and it ends sooner if left idle this long
+_TOUCH_EVERY = timedelta(minutes=1)  # write last_seen_at at most this often
 MAX_FAILURES = 5                    # consecutive wrong passwords ...
 LOCK_WINDOW = timedelta(minutes=15)  # ... within this long lock the login for the same time
 _SCRYPT = {"n": 2 ** 15, "r": 8, "p": 1, "maxmem": 64 * 1024 * 1024}
@@ -24,6 +27,14 @@ _SCRYPT = {"n": 2 ** 15, "r": 8, "p": 1, "maxmem": 64 * 1024 * 1024}
 
 def auth_enabled() -> bool:
     return os.environ.get("TXREADER_AUTH", "").lower() != "off"
+
+
+def idle_timeout() -> timedelta:
+    try:
+        minutes = int(os.environ.get("TXREADER_IDLE_MINUTES", DEFAULT_IDLE_MINUTES))
+    except ValueError:
+        minutes = DEFAULT_IDLE_MINUTES
+    return timedelta(minutes=max(1, minutes))
 
 
 def hash_password(password: str) -> str:
@@ -81,7 +92,7 @@ def login(password: str, ip: str | None, user_agent: str | None) -> str:
     with connect() as conn:
         if not stored:
             _log(conn, ip, user_agent, False, "not_configured")
-            error = "服务器没有设置密码（环境变量 TXREADER_PASSWORD_HASH）"
+            error = "服务器没有设置密码（在 .env 里设置 TXREADER_PASSWORD_HASH）"
         elif until := locked_until(conn):
             _log(conn, ip, user_agent, False, "locked")
             mins = max(1, round((until - datetime.now(timezone.utc)).total_seconds() / 60))
@@ -94,20 +105,39 @@ def login(password: str, ip: str | None, user_agent: str | None) -> str:
             token = secrets.token_urlsafe(32)
             created = datetime.now(timezone.utc)
             conn.execute(
-                "INSERT INTO sessions (token_hash, created_at, expires_at, ip, user_agent) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO sessions (token_hash, created_at, expires_at, last_seen_at, ip, user_agent)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
                 (_token_hash(token), created.isoformat(timespec="seconds"),
-                 (created + timedelta(days=SESSION_DAYS)).isoformat(timespec="seconds"), ip, user_agent))
+                 (created + timedelta(days=SESSION_DAYS)).isoformat(timespec="seconds"),
+                 created.isoformat(timespec="seconds"), ip, user_agent))
     if error:
         raise LoginError(error)
     return token
 
 
+def _ends_at(r) -> datetime:
+    """When a session ends: its hard limit, or idle_timeout() after its last request if sooner."""
+    seen = datetime.fromisoformat(r["last_seen_at"] or r["created_at"])
+    return min(datetime.fromisoformat(r["expires_at"]), seen + idle_timeout())
+
+
 def session_valid(token: str | None) -> bool:
+    """Whether the cookie belongs to a live session; counts as activity, so it also keeps it alive."""
     if not token:
         return False
+    t = datetime.now(timezone.utc)
     with connect() as conn:
-        r = conn.execute("SELECT expires_at FROM sessions WHERE token_hash = ?", (_token_hash(token),)).fetchone()
-    return bool(r) and datetime.fromisoformat(r["expires_at"]) > datetime.now(timezone.utc)
+        r = conn.execute("SELECT id, created_at, expires_at, last_seen_at FROM sessions WHERE token_hash = ?",
+                         (_token_hash(token),)).fetchone()
+        if not r:
+            return False
+        if _ends_at(r) <= t:
+            conn.execute("DELETE FROM sessions WHERE id = ?", (r["id"],))
+            return False
+        if not r["last_seen_at"] or datetime.fromisoformat(r["last_seen_at"]) + _TOUCH_EVERY <= t:
+            conn.execute("UPDATE sessions SET last_seen_at = ? WHERE id = ?",
+                         (t.isoformat(timespec="seconds"), r["id"]))
+    return True
 
 
 def logout(token: str | None) -> None:
@@ -124,13 +154,18 @@ def logout_all() -> int:
 def security_overview(current_token: str | None) -> dict:
     current = _token_hash(current_token) if current_token else None
     with connect() as conn:
-        conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now(),))
-        sessions = [{**dict(r), "current": r["token_hash"] == current} for r in conn.execute(
-            "SELECT token_hash, created_at, expires_at, ip, user_agent FROM sessions ORDER BY id DESC")]
+        t = datetime.now(timezone.utc)
+        sessions = []
+        for r in conn.execute("SELECT * FROM sessions ORDER BY id DESC").fetchall():
+            ends = _ends_at(r)
+            if ends <= t:
+                conn.execute("DELETE FROM sessions WHERE id = ?", (r["id"],))
+                continue
+            sessions.append({"created_at": r["created_at"], "last_seen_at": r["last_seen_at"] or r["created_at"],
+                             "ends_at": ends.isoformat(timespec="seconds"), "ip": r["ip"],
+                             "user_agent": r["user_agent"], "current": r["token_hash"] == current})
         events = [dict(r) for r in conn.execute(
             "SELECT at, ip, user_agent, success, reason FROM login_events ORDER BY id DESC LIMIT 100")]
-    for s in sessions:
-        del s["token_hash"]
     return {"sessions": sessions, "events": events}
 
 

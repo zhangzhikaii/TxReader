@@ -4,13 +4,17 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
-from txreader import auth, store
-from txreader.db import image_path
-from txreader.parsers import PARSERS
+# Settings come from .env (see .env.example); variables already set in the environment win
+load_dotenv(Path(__file__).parent / ".env")
+
+from txreader import auth, store  # noqa: E402
+from txreader.db import image_path  # noqa: E402
+from txreader.parsers import PARSERS  # noqa: E402
 
 app = FastAPI(title="TxReader")
 STATIC = Path(__file__).parent / "static"
@@ -160,13 +164,17 @@ def transactions(source: str | None = None, date_from: str | None = None, date_t
     return {"transactions": store.list_transactions(source, date_from, date_to)}
 
 
-class DescriptionBody(BaseModel):
-    description: str
+class TransactionEdit(BaseModel):
+    category: str | None = None
+    description: str | None = None
 
 
 @app.patch("/api/transactions/{tx_id}")
-def edit_transaction(tx_id: int, body: DescriptionBody):
-    store.update_description(tx_id, body.description)
+def edit_transaction(tx_id: int, body: TransactionEdit):
+    try:
+        store.update_transaction(tx_id, body.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     return {"ok": True}
 
 

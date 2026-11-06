@@ -17,17 +17,20 @@
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m txreader.auth          # 输入密码，打印出密码哈希
-export TXREADER_PASSWORD_HASH='scrypt:...'  # 上一步的输出
+cp .env.example .env
+.venv/bin/python -m txreader.auth          # 输入密码，打印出密码哈希，填到 .env 的 TXREADER_PASSWORD_HASH
 .venv/bin/uvicorn app:app --port 8000
 ```
 
-只在自己电脑上用、不想登录时，可以改用 `TXREADER_AUTH=off`（不要在服务器上这样做）。
+设置都在 `.env` 里（已被 git 忽略，不要提交），各项说明见 `.env.example`。已经在系统环境变量里设置的项优先，不会被 `.env` 覆盖。
+
+- 只在自己电脑上用、不想登录时，可以设 `TXREADER_AUTH=off`（不要在服务器上这样做）
+- 登录后 2 小时没有操作会自动退出，可用 `TXREADER_IDLE_MINUTES` 改（单位分钟）；一直在用的话最长 30 天也要重新登录
 
 打开 http://localhost:8000 ，登录后有四个页面：
 
 - **识别**：选择来源，填写账户、币种、默认种类（每个来源分别记住），拖入截图。识别出的交易进入「待核对」，修改会自动保存，下次打开还在；勾选核对好的行，点「提交入库」
-- **交易**：已入库的交易，可按来源和日期筛选；入库后只能改描述；点一行查看原截图
+- **交易**：已入库的交易，可按来源和日期筛选；入库后只能改种类和描述；点一行查看原截图
 - **导出**：勾选交易导出 CSV，默认勾选没导出过的；导出过的也能再导出，每次导出都有记录
 - **登录记录**：登录成功 / 失败的记录，当前登录的设备，可以让所有设备下线。密码连续错 5 次锁定 15 分钟
 
@@ -40,7 +43,7 @@ export TXREADER_PASSWORD_HASH='scrypt:...'  # 上一步的输出
 
 ### 数据
 
-都存在 `data/`（可用环境变量 `TXREADER_DATA` 改位置，已被 git 忽略）：`txreader.db` 是 SQLite 数据库，`images/` 是转成 WebP 的截图。备份这个目录即可。
+都存在 `data/`（可在 `.env` 里用 `TXREADER_DATA` 改位置，已被 git 忽略）：`txreader.db` 是 SQLite 数据库，`images/` 是转成 WebP 的截图。备份这个目录即可。
 
 ## CSV 格式
 
