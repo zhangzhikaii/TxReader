@@ -160,9 +160,10 @@ def image(image_id: int):
 # ---------- transactions & exports ----------
 
 @app.get("/api/transactions")
-def transactions(source: str | None = None, date_from: str | None = None, date_to: str | None = None):
+def transactions(source: str | None = None, date_from: str | None = None, date_to: str | None = None,
+                 account: str | None = None, currency: str | None = None, category: str | None = None):
     """source: a screenshot source key, or "manual"."""
-    return {"transactions": store.list_transactions(source, date_from, date_to)}
+    return {"transactions": store.list_transactions(source, date_from, date_to, account, currency, category)}
 
 
 class TransactionFields(BaseModel):
@@ -177,6 +178,7 @@ class TransactionFields(BaseModel):
 class TransactionEdit(BaseModel):
     category: str | None = None
     description: str | None = None
+    add_category: bool = False  # the user agreed to add a category not on the list yet
 
 
 class ManualBody(BaseModel):
@@ -199,7 +201,9 @@ def add_transactions(body: ManualBody):
 @app.patch("/api/transactions/{tx_id}")
 def edit_transaction(tx_id: int, body: TransactionEdit):
     try:
-        store.update_transaction(tx_id, body.model_dump())
+        store.update_transaction(tx_id, body.model_dump(exclude={"add_category"}), body.add_category)
+    except lists.UnknownNames as e:
+        raise HTTPException(409, {"message": str(e), "unknown": e.unknown})
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"ok": True}

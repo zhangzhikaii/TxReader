@@ -209,10 +209,16 @@ def confirm(rows: list[dict]) -> int:
 # ---------- transactions ----------
 
 def list_transactions(source: str | None = None, date_from: str | None = None,
-                      date_to: str | None = None) -> list[dict]:
+                      date_to: str | None = None, account: str | None = None,
+                      currency: str | None = None, category: str | None = None) -> list[dict]:
     """source is a screenshot source key, or "manual" for rows typed in by hand.
-    date_from / date_to are inclusive, as 2026-10-01 or 2026/10/01."""
+    date_from / date_to are inclusive, as 2026-10-01 or 2026/10/01.
+    account / currency / category match the name exactly."""
     where, args = [], []
+    for col, value in (("account", account), ("currency", currency), ("category", category)):
+        if value:
+            where.append(f"t.{col} = ?")
+            args.append(value)
     if source == "manual":
         where.append("t.origin = 'manual'")
     elif source:
@@ -292,13 +298,20 @@ def add_manual(rows: list[dict], add_accounts: bool = False) -> list[int]:
     return ids
 
 
-def update_transaction(tx_id: int, changes: dict) -> None:
+def update_transaction(tx_id: int, changes: dict, add_category: bool = False) -> None:
+    """A category not on the list yet is added only with add_category (the user has been
+    asked); otherwise lists.UnknownNames is raised."""
     fields = _clean_tx(changes, TX_EDITABLE)
     if not fields:
         raise ValueError("入库后只能修改种类和描述")
     if "category" in fields and not fields["category"]:
         raise ValueError("种类不能为空")
     with connect() as conn:
+        if "category" in fields and fields["category"] not in lists.offered(conn)["categories"]:
+            if not add_category:
+                raise lists.UnknownNames({"accounts": [], "currencies": [], "pairs": [],
+                                          "categories": [fields["category"]]})
+            register_accounts(conn, [], [fields["category"]])
         n = conn.execute(
             "UPDATE transactions SET " + ", ".join(f"{k} = ?" for k in fields) + ", updated_at = ? WHERE id = ?",
             (*fields.values(), now(), tx_id)).rowcount

@@ -95,6 +95,12 @@ def test_transactions_and_exports(client):
     # Only the category and description can change after confirming
     tx_url = f"/api/transactions/{txs[0]['id']}"
     assert client.patch(tx_url, json={"description": 'Shop, "A"'}).is_success
+    # A category not on the list yet: asked first (409), added once agreed
+    r = client.patch(tx_url, json={"category": "日用品"})
+    assert r.status_code == 409 and r.json()["detail"]["unknown"]["categories"] == ["日用品"]
+    assert client.patch(tx_url, json={"category": "日用品", "add_category": True}).is_success
+    assert "日用品" in client.get("/api/suggestions").json()["categories"]
+    assert client.patch(tx_url, json={"category": "饮食费"}).is_success  # on the list: no question
     assert client.patch(tx_url, json={"category": "日用品"}).is_success
     assert client.patch(tx_url, json={"amount": 5}).status_code == 400
 
@@ -405,3 +411,15 @@ def test_balance_sheet(client):
     assert nov["converted"]["日元"] is None and nov["total"] is None and nov["change"] is None
     assert nov["fx_gain"]["日元"] is None
     assert client.get("/api/balances?month=2026-08").status_code == 400
+
+
+def test_transaction_filters(client):
+    row = {"date": "2026/10/05 08:30:00", "account": "现金", "currency": "日元", "amount": -500,
+           "category": "饮食费", "description": ""}
+    client.post("/api/transactions", json={"add_accounts": True, "rows": [
+        row, {**row, "account": "微信", "currency": "人民币"}, {**row, "category": "交通费", "date": "2026/11/01 09:00:00"}]})
+    get = lambda q: [(t["account"], t["category"]) for t in client.get("/api/transactions?" + q).json()["transactions"]]
+    assert get("account=现金") == [("现金", "饮食费"), ("现金", "交通费")]
+    assert get("currency=人民币") == [("微信", "饮食费")]
+    assert get("category=交通费") == [("现金", "交通费")]
+    assert get("account=现金&category=饮食费&date_from=2026-10-01&date_to=2026-10-31") == [("现金", "饮食费")]
