@@ -178,7 +178,6 @@
       <a href="#transactions" data-view="transactions">交易</a>
       <a href="#balances" data-view="balances">结余</a>
       <a href="#export" data-view="export">导出</a>
-      <a href="#rates" data-view="rates">汇率</a>
       <a href="#settings" data-view="settings">设置</a>
       <a href="#security" data-view="security">登录记录</a>
     </nav>
@@ -375,6 +374,7 @@
      <button data-set-tab="currencies" role="tab">币种</button>
      <button data-set-tab="categories" role="tab">种类</button>
      <button data-set-tab="opening" role="tab">期初余额</button>
+     <button data-set-tab="rates" role="tab">月汇率</button>
    </div>
     <div class="card" data-set-panel="accounts">
       <h2>账户</h2>
@@ -414,11 +414,7 @@
       </table></div>
       <div class="bar"><span id="op-status" class="status"></span></div>
     </div>
-  </section>
-
-  <!-- ===== 汇率 ===== -->
-  <section id="view-rates" hidden>
-    <div class="card">
+    <div class="card" data-set-panel="rates">
       <h2>月汇率</h2>
       <p class="settings-help" id="fx-help"></p>
       <div class="table-wrap"><table class="grid">
@@ -429,6 +425,7 @@
       <div class="legend">黄色是还没填的。改完离开输入框就会保存；清空即删除这个月的汇率。汇差盈亏 = 上月底存量 ×（本月汇率 − 上月汇率）</div>
     </div>
   </section>
+
 
   <!-- ===== 登录记录 ===== -->
   <section id="view-security" hidden>
@@ -526,10 +523,15 @@ function flash(el, msg) { $(el).textContent = msg; }
 
 // ---------- views ----------
 
-const VIEWS = ["add", "transactions", "balances", "export", "rates", "settings", "security"];
+const VIEWS = ["add", "transactions", "balances", "export", "settings", "security"];
 function route() {
   let view = location.hash.slice(1);
   if (view === "recognize") { view = "add"; showMethod("screenshot"); } // old bookmark
+  if (view === "rates") { // rates moved into settings; old links still work
+    view = "settings";
+    showSetTab("rates");
+    history.replaceState(null, "", "#settings");
+  }
   if (!VIEWS.includes(view)) view = "add";
   for (const v of VIEWS) $("view-" + v).hidden = v !== view;
   for (const a of document.querySelectorAll("nav a")) a.classList.toggle("active", a.dataset.view === view);
@@ -537,8 +539,7 @@ function route() {
   if (view === "add") { if (method === "screenshot") loadPending(); loadSuggestions(); }
   if (view === "transactions") loadSuggestions().then(fillTxFilters).then(loadTransactions); // lists may have changed in settings
   if (view === "export") { loadExportRows(); loadExportHistory(); }
-  if (view === "settings") loadSettings();
-  if (view === "rates") loadRates();
+  if (view === "settings") { loadSettings(); loadRates(); }
   if (view === "balances") loadBalances($("bal-month").value || null);
   if (view === "security") loadSecurity();
 }
@@ -1231,7 +1232,7 @@ async function loadBalances(month) {
   const cur = bal.currencies, base = bal.base ?? "本位币";
   const noRate = cur.filter(c => bal.rates[c] == null);
   $("bal-warn").innerHTML = noRate.length
-    ? `<div class="warn-box">${fmtMonth(bal.month)}还没填 ${noRate.map(esc).join("、")} 的汇率，折算不出来。去「<a href="#rates">汇率</a>」页面填上。</div>` : "";
+    ? `<div class="warn-box">${fmtMonth(bal.month)}还没填 ${noRate.map(esc).join("、")} 的汇率，折算不出来。去「<a href="#rates">设置 › 月汇率</a>」填上。</div>` : "";
   $("bal-card").hidden = false;
   $("bal-title").textContent = monthEnd(bal.month) + " 结余";
   $("bal-head").innerHTML = `<tr><th>账户</th>${cur.map(c => `<th class="num">${esc(c)}</th>`).join("")}</tr>`;
@@ -1451,7 +1452,7 @@ $("view-settings").addEventListener("keydown", e => {
 });
 
 // One tab at a time, remembered
-const SET_TABS = ["accounts", "currencies", "categories", "opening"];
+const SET_TABS = ["accounts", "currencies", "categories", "opening", "rates"];
 function showSetTab(tab) {
   if (!SET_TABS.includes(tab)) tab = "accounts";
   save("tx.settings.tab", tab);

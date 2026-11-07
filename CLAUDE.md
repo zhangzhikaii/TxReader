@@ -25,7 +25,7 @@ txreader/parsers/         每个来源一个解析器，parse_boxes(boxes, img) 
   receipt.py              纸质小票照片（各家版式不同）；按文本框倾斜角配对「合計」与金额
 txreader/models.py        Tx（解析结果）与 resolve_date（补全缺失的年 / 月，并标记为推测）
 txreader/records.py       build_records：合并多张截图、跨截图去重、按时间排序，生成行
-static/index.html         整个前端（记一笔 / 交易 / 结余 / 导出 / 汇率 / 设置 / 登录记录七个页面，按 #hash 切换；记一笔里再分截图识别 / 手动输入 / 邮件导入），单文件原生 JS，无构建步骤
+static/index.html         整个前端（记一笔 / 交易 / 结余 / 导出 / 设置 / 登录记录六个页面；设置里再分账户 / 币种 / 种类 / 期初余额 / 月汇率，按 #hash 切换；记一笔里再分截图识别 / 手动输入 / 邮件导入），单文件原生 JS，无构建步骤
 static/login.html         登录页
 tests/test_logic.py       去重、日期推断、比对规则等纯逻辑测试
 tests/test_api.py         接口全流程测试（假识别结果 + 临时数据目录）
