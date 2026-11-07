@@ -50,7 +50,8 @@ CREATE INDEX IF NOT EXISTS ocr_rows_source ON ocr_rows(source, status);
 
 CREATE TABLE IF NOT EXISTS transactions (
     id           INTEGER PRIMARY KEY,
-    ocr_row_id   INTEGER NOT NULL UNIQUE REFERENCES ocr_rows(id),
+    origin       TEXT NOT NULL DEFAULT 'screenshot' CHECK (origin IN ('screenshot', 'manual', 'email')),
+    ocr_row_id   INTEGER UNIQUE REFERENCES ocr_rows(id),  -- set for screenshot rows only
     date         TEXT NOT NULL,
     weekday      TEXT NOT NULL,
     account      TEXT NOT NULL,
@@ -62,6 +63,25 @@ CREATE TABLE IF NOT EXISTS transactions (
     updated_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS transactions_date ON transactions(date);
+
+-- Accounts and currencies known so far; an account may be used with several currencies
+CREATE TABLE IF NOT EXISTS accounts (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS currencies (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS account_currencies (
+    account_id  INTEGER NOT NULL REFERENCES accounts(id),
+    currency_id INTEGER NOT NULL REFERENCES currencies(id),
+    PRIMARY KEY (account_id, currency_id)
+);
 
 CREATE TABLE IF NOT EXISTS exports (
     id       INTEGER PRIMARY KEY,
@@ -115,6 +135,44 @@ def _migrate(conn) -> None:
     if "last_seen_at" not in cols:
         conn.execute("ALTER TABLE sessions ADD COLUMN last_seen_at TEXT")
         conn.execute("UPDATE sessions SET last_seen_at = created_at")
+
+    # transactions gained `origin` and a nullable ocr_row_id (manual entries have no screenshot).
+    # SQLite can't drop NOT NULL in place, so the table is rebuilt from the definition in SCHEMA.
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(transactions)")}
+    if "origin" not in cols:
+        create = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS transactions"):]
+        create = create[:create.index(");") + 2].replace("IF NOT EXISTS transactions", "transactions_new")
+        kept = ("id, ocr_row_id, date, weekday, account, currency, amount, category, description,"
+                " confirmed_at, updated_at")
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = OFF")  # export_items points at transactions
+        conn.executescript(
+            f"BEGIN; {create}"
+            f" INSERT INTO transactions_new ({kept}) SELECT {kept} FROM transactions;"
+            " DROP TABLE transactions; ALTER TABLE transactions_new RENAME TO transactions;"
+            " CREATE INDEX IF NOT EXISTS transactions_date ON transactions(date); COMMIT;")
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    # The account / currency lists started out empty: fill them once from the transactions so far
+    if not conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():
+        register_accounts(conn, conn.execute(
+            "SELECT DISTINCT account, currency FROM transactions ORDER BY id").fetchall())
+
+
+def register_accounts(conn, pairs) -> None:
+    """Add (account, currency) pairs that aren't known yet; blank names are ignored."""
+    t = now()
+    for account, currency in pairs:
+        account, currency = (account or "").strip(), (currency or "").strip()
+        if account:
+            conn.execute("INSERT OR IGNORE INTO accounts (name, created_at) VALUES (?, ?)", (account, t))
+        if currency:
+            conn.execute("INSERT OR IGNORE INTO currencies (name, created_at) VALUES (?, ?)", (currency, t))
+        if account and currency:
+            conn.execute(
+                "INSERT OR IGNORE INTO account_currencies (account_id, currency_id)"
+                " SELECT a.id, c.id FROM accounts a, currencies c WHERE a.name = ? AND c.name = ?",
+                (account, currency))
 
 
 @contextmanager

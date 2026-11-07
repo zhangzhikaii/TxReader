@@ -1,14 +1,14 @@
 # TxReader
 
-本地网页工具：上传手机 App 的交易截图，用 OCR 识别出交易，在网页里核对、修改后导出记账用的 CSV。用户自己记账用，识别完全在本地（RapidOCR），不联网。用户用中文交流。
+用户自己用的记账网页。目前的主要功能：上传手机 App 的交易截图，用 OCR 识别出交易，核对、修改后入库，再导出 CSV。识别完全在本地（RapidOCR），不联网。正在扩展成记账系统（手动输入、邮件导入、每月统计）。用户用中文交流。
 
-运行、CSV 格式、各来源的说明见 `README.md`。云端部署计划（数据库、核对入库、导出记录、登录、部署）见 `docs/cloud-plan.md`，做完一步就在上面打勾；目前只剩第 6 步部署。
+运行、CSV 格式、各来源的说明见 `README.md`。当前计划见 `docs/plan.md`（记一笔首页、手动输入、种类 / 账户 / 汇率设置、统计、邮件导入、部署），做完一步就在上面打勾，决定有变就更新它。统计表的样子参照 `docs/example.csv`（用户自己写的示例）。
 
 ## 结构
 
 ```
 app.py                    FastAPI：页面、登录检查（中间件）、全部 /api 接口
-txreader/db.py            SQLite 表结构、连接、截图存成 WebP（数据目录 TXREADER_DATA，默认 data/）
+txreader/db.py            SQLite 表结构、旧库升级（`_migrate`）、账户 / 币种登记（`register_accounts`）、连接、截图存成 WebP（数据目录 TXREADER_DATA，默认 data/）
 txreader/store.py         识别入库流程、待核对行、确认入库、交易、导出 CSV
 txreader/matching.py      新识别的行与库里已有行比对（跳过 / 合并 / 疑似重复 / 新增）
 txreader/auth.py          单用户密码登录、会话（闲置超时 + 30 天上限）、登录记录、错误次数锁定；`python -m txreader.auth` 生成密码哈希（填到 `.env`）
@@ -22,14 +22,14 @@ txreader/parsers/         每个来源一个解析器，parse_boxes(boxes, img) 
   receipt.py              纸质小票照片（各家版式不同）；按文本框倾斜角配对「合計」与金额
 txreader/models.py        Tx（解析结果）与 resolve_date（补全缺失的年 / 月，并标记为推测）
 txreader/records.py       build_records：合并多张截图、跨截图去重、按时间排序，生成行
-static/index.html         整个前端（识别 / 交易 / 导出 / 登录记录四个页面，按 #hash 切换），单文件原生 JS，无构建步骤
+static/index.html         整个前端（记一笔 / 交易 / 导出 / 登录记录四个页面，按 #hash 切换；记一笔里再分截图识别 / 手动输入 / 邮件导入），单文件原生 JS，无构建步骤
 static/login.html         登录页
 tests/test_logic.py       去重、日期推断、比对规则等纯逻辑测试
 tests/test_api.py         接口全流程测试（假识别结果 + 临时数据目录）
 tests/test_samples.py     用 samples/ 里的真实截图对照期望结果（没有 samples/ 时自动跳过）
 ```
 
-数据流：截图（按哈希存成 WebP，传过的直接用上次结果）→ OCR Box → 来源解析器 → `Tx` → `build_records` → `match_rows` 与库里比对 → 新行存为 `ocr_rows`（pending）→ 前端核对、修改（存为 draft）→ 确认后写入 `transactions` → 导出 CSV 并记录到 `exports`。
+数据流：截图（按哈希存成 WebP，传过的直接用上次结果）→ OCR Box → 来源解析器 → `Tx` → `build_records` → `match_rows` 与库里比对 → 新行存为 `ocr_rows`（pending）→ 前端核对、修改（存为 draft）→ 确认后写入 `transactions`（`origin = screenshot`）→ 导出 CSV 并记录到 `exports`。手动输入直接写入 `transactions`（`origin = manual`，没有 `ocr_row_id`）。账户 / 币种清单在 `accounts`、`currencies`、`account_currencies`（一个账户可有多个币种）：截图入库时自动登记，手动输入遇到新的要用户在确认框里同意（接口参数 `add_accounts`，否则 409）。
 
 ## 约定
 
@@ -37,7 +37,7 @@ tests/test_samples.py     用 samples/ 里的真实截图对照期望结果（�
 - 去重：只去掉**不同截图之间**的重复（滚动截图会重叠），同一张截图里两笔一模一样的交易都保留；有余额时用余额区分。
 - 每个来源的解析器顶部 docstring 画出该截图的版式，改解析器前先看它。示例里的商户名都用「某某商户」这类占位。
 - 代码注释用英文，界面文字、README、提交信息用中文。
-- `ocr_rows` 里的识别原始值不改，比对只用它们；待核对时的修改存在 `draft`（JSON）里。入库后只能改种类和描述。没有「忽略」状态，不要的待核对行直接删除。
+- `ocr_rows` 里的识别原始值不改，比对只用它们；待核对时的修改存在 `draft`（JSON）里。入库后的交易（不论怎么添加的）只能改种类和描述（`store.TX_EDITABLE`），不能删除。手动输入时日期、账户、币种、金额、种类必填（`store.TX_REQUIRED`）。没有「忽略」状态，不要的待核对行直接删除。
 
 ### 新增一个来源时要改
 
@@ -48,6 +48,7 @@ tests/test_samples.py     用 samples/ 里的真实截图对照期望结果（�
 
 ## 前端要点（static/index.html）
 
+- 「记一笔」的添加方式由 `showMethod` / `setMethod` 切换（后者还会加载数据），存在 localStorage 的 `tx.method`。手动输入的行在 `mRows`，未入库的暂存在 `tx.manual.draft`。
 - 待核对行、交易都从服务器读取；`records` 是当前来源的待核对行，`images` 只是本次上传的缩略图。设置项存 localStorage，账户 / 币种 / 种类按来源分别记住；没手动改过的行跟随默认值。
 - 切换来源会调用 `clearSession()`，清掉缩略图和大图，并让 `session` 加一，这样仍在识别中的请求返回后会被丢弃，然后重新读取该来源的待核对行。
 - 删除缩略图只是从页面移除，不影响已识别出的行；每行的 🖼 按钮从服务器打开它的原截图。

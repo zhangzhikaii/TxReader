@@ -169,3 +169,77 @@ def test_idle_session_expires(client, monkeypatch):
     with connect() as conn:
         assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
 
+
+
+def test_manual_entry(client):
+    row = {"date": "2026/10/05 08:30:15", "account": "现金", "currency": "日元", "amount": -500,
+           "category": "饮食费", "description": ""}
+    for bad in ({"amount": 0}, {"date": "2026/02/30 00:00:00"}, {"date": "2026/10/05 08:30"},
+                {"account": ""}, {"currency": " "}, {"category": ""}):
+        assert client.post("/api/transactions", json={"rows": [row, {**row, **bad}]}).status_code == 400
+    assert client.get("/api/transactions").json()["transactions"] == []  # all or nothing
+
+    # A new account (and currency) is only added once the user agreed
+    rows = [row, {**row, "amount": 1000, "category": "红包"}]
+    r = client.post("/api/transactions", json={"rows": rows})
+    assert r.status_code == 409
+    assert r.json()["detail"]["unknown"] == {"accounts": ["现金"], "currencies": ["日元"], "pairs": []}
+    ids = client.post("/api/transactions", json={"rows": rows, "add_accounts": True}).json()["ids"]
+    txs = client.get("/api/transactions?source=manual").json()["transactions"]
+    assert [(t["origin"], t["date"], t["weekday"], t["amount"], t["image_id"]) for t in txs] == [
+        ("manual", "2026/10/05 08:30:15", "月", -500, None), ("manual", "2026/10/05 08:30:15", "月", 1000, None)]
+    assert client.get("/api/transactions?source=wechat").json()["transactions"] == []
+
+    # Once stored, a manual row follows the same rules as any other: category and description only
+    assert client.patch(f"/api/transactions/{ids[0]}", json={"description": "便利店"}).is_success
+    assert client.patch(f"/api/transactions/{ids[0]}", json={"amount": -600}).status_code == 400
+    assert client.patch(f"/api/transactions/{ids[0]}", json={"category": ""}).status_code == 400
+    assert client.delete(f"/api/transactions/{ids[0]}").status_code == 405
+
+    # An account can hold several currencies; using a known account with a new one asks again
+    rmb = {**row, "currency": "人民币"}
+    r = client.post("/api/transactions", json={"rows": [rmb]})
+    assert r.status_code == 409
+    assert r.json()["detail"]["unknown"] == {"accounts": [], "currencies": ["人民币"], "pairs": [["现金", "人民币"]]}
+    client.post("/api/transactions", json={"rows": [rmb], "add_accounts": True})
+    assert client.post("/api/transactions", json={"rows": [rmb]}).is_success  # known now
+
+    sug = client.get("/api/suggestions").json()
+    assert sug["accounts"] == [{"name": "现金", "currencies": ["日元", "人民币"]}]  # 2 uses each; older first
+    assert sug["currencies"] == ["日元", "人民币"]
+    assert set(sug["categories"]) == {"饮食费", "红包"}
+
+
+def test_account_lists_filled_from_screenshots(client):
+    p = upload(client, b"shot3")["pending"][0]
+    client.post("/api/confirm", json={"rows": [{"id": p["id"], "date": p["date"], "amount": p["amount"],
+                                                "account": "微信", "currency": "人民币"}]})
+    assert client.get("/api/suggestions").json()["accounts"] == [{"name": "微信", "currencies": ["人民币"]}]
+
+
+def test_old_transactions_table_is_upgraded(tmp_path, monkeypatch):
+    import sqlite3
+    from txreader import db
+    path = tmp_path / "txreader.db"
+    old = sqlite3.connect(path)
+    old.executescript("""
+        CREATE TABLE transactions (id INTEGER PRIMARY KEY, ocr_row_id INTEGER NOT NULL UNIQUE,
+            date TEXT NOT NULL, weekday TEXT NOT NULL, account TEXT NOT NULL, currency TEXT NOT NULL,
+            amount REAL NOT NULL, category TEXT NOT NULL, description TEXT NOT NULL,
+            confirmed_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        INSERT INTO transactions VALUES (7, 3, '2026/10/01 12:00:00', '木', '微信', '人民币', -10, '饮食费', 'x', 't', 't');
+        CREATE TABLE export_items (export_id INTEGER, transaction_id INTEGER REFERENCES transactions(id));
+        INSERT INTO export_items VALUES (1, 7);
+    """)
+    old.commit()
+    old.close()
+    monkeypatch.setenv("TXREADER_DATA", str(tmp_path))
+    with db.connect() as conn:
+        r = conn.execute("SELECT id, origin, ocr_row_id FROM transactions").fetchone()
+        assert tuple(r) == (7, "screenshot", 3)
+        assert conn.execute("SELECT transaction_id FROM export_items").fetchone()[0] == 7
+        # The account list starts from the accounts already used
+        assert tuple(conn.execute("SELECT a.name, c.name FROM account_currencies ac JOIN accounts a ON a.id = ac.account_id"
+                            " JOIN currencies c ON c.id = ac.currency_id").fetchone()) == ("微信", "人民币")
+        conn.execute("INSERT INTO transactions (origin, date, weekday, account, currency, amount, category,"
+                     " description, confirmed_at, updated_at) VALUES ('manual', 'd', 'w', '', '', 1, '', '', 't', 't')")

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TxReader</title>
+<title>TxReader · 记账</title>
 <style>
   :root { --bg:#f6f7f9; --card:#fff; --text:#1f2328; --muted:#6b7280; --line:#e5e7eb;
           --accent:#07c160; --income:#fff7e6; --warn:#fde8e8; --suspect:#f3e8ff; }
@@ -94,15 +94,34 @@
   details { margin-top:12px; font-size:14px; }
   details summary { cursor:pointer; color:var(--muted); }
   .empty { color:var(--muted); font-size:14px; padding:12px 0; }
+  /* Ways of adding a record */
+  .tabs { display:flex; gap:4px; margin-bottom:16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .tabs button { background:none; color:var(--muted); border-radius:6px 6px 0 0; padding:8px 16px;
+                 border-bottom:2px solid transparent; margin-bottom:-1px; }
+  .tabs button:hover { color:var(--text); background:var(--line); }
+  .tabs button.active { color:var(--text); border-bottom-color:var(--accent); font-weight:600; }
+  .tabs .soon { font-size:11px; color:var(--muted); font-weight:normal; margin-left:4px; }
+  td.dt input { width:190px; padding:4px; font-variant-numeric:tabular-nums; }
+  td button.sign { width:56px; padding:4px 0; background:#fee2e2; color:#b91c1c; }
+  td button.sign.in { background:#fef3c7; color:#92400e; }
+  .muted { color:var(--muted); }
+  /* Confirmation before storing manual rows */
+  dialog { border:0; border-radius:12px; padding:20px; width:min(860px, calc(100vw - 32px)); max-height:calc(100vh - 48px);
+           box-shadow:0 20px 50px rgba(0,0,0,.25); color:var(--text); }
+  dialog::backdrop { background:rgba(15,23,42,.45); }
+  dialog .notice { background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:14px; }
+  dialog .notice ul { margin:6px 0; padding-left:20px; }
+  dialog .totals { font-size:14px; margin-top:10px; }
+  dialog .actions { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
 </style>
 </head>
 <body>
 <div class="layout">
 <main>
   <header>
-    <h1>TxReader · 截图记账</h1>
+    <h1>TxReader · 记账</h1>
     <nav>
-      <a href="#recognize" data-view="recognize">识别</a>
+      <a href="#add" data-view="add">记一笔</a>
       <a href="#transactions" data-view="transactions">交易</a>
       <a href="#export" data-view="export">导出</a>
       <a href="#security" data-view="security">登录记录</a>
@@ -110,8 +129,67 @@
     <button id="logout" class="secondary" hidden>退出</button>
   </header>
 
-  <!-- ===== 识别 ===== -->
-  <section id="view-recognize" hidden>
+  <!-- ===== 记一笔 ===== -->
+  <section id="view-add" hidden>
+   <div class="tabs" role="tablist">
+     <button data-method="screenshot" role="tab">截图识别</button>
+     <button data-method="manual" role="tab">手动输入</button>
+     <button data-method="email" role="tab">邮件导入<span class="soon">整合中</span></button>
+   </div>
+
+   <!-- 手动输入 -->
+   <div id="method-manual" hidden>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>日期时间</th><th>账户</th><th>币种</th><th>收支</th><th>金额</th><th>种类</th><th>描述</th><th></th></tr></thead>
+          <tbody id="m-rows"></tbody>
+        </table>
+      </div>
+      <div class="bar">
+        <button id="m-save">入库</button>
+        <button id="m-add" class="secondary">＋ 再加一行</button>
+        <span id="m-status" class="status"></span>
+      </div>
+      <div class="legend">新的一行沿用上一行的日期、账户、币种和种类；回车跳到下一行，最后一行回车会再加一行。金额直接填数字，用「收支」切换支出 / 收入（也可以在金额前加 + 或 -）。日期时间、账户、币种、金额、种类都要填，描述可以空着；没填金额的行不会提交。还没入库的内容暂存在这个浏览器里</div>
+      <datalist id="m-accounts"></datalist>
+      <datalist id="m-categories"></datalist>
+      <div id="m-cur-lists"></div>
+    </div>
+    <dialog id="m-confirm">
+      <h2 id="m-confirm-title"></h2>
+      <div id="m-confirm-new" class="notice" hidden></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>日期</th><th>曜日</th><th>账户</th><th>币种</th><th class="num">金额</th><th>种类</th><th>描述</th></tr></thead>
+          <tbody id="m-confirm-rows"></tbody>
+        </table>
+      </div>
+      <div id="m-confirm-totals" class="totals"></div>
+      <div class="actions">
+        <button id="m-confirm-cancel" class="secondary">返回修改</button>
+        <button id="m-confirm-ok"></button>
+      </div>
+    </dialog>
+    <div class="card" id="m-recent" hidden>
+      <h2>刚才入库的</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>日期</th><th>曜日</th><th>账户</th><th>币种</th><th class="num">金额</th><th>种类</th><th>描述</th></tr></thead>
+          <tbody id="m-recent-rows"></tbody>
+        </table>
+      </div>
+      <div class="legend">入库后只能在「<a href="#transactions">交易</a>」页面修改种类和描述，请在入库前核对好</div>
+    </div>
+   </div>
+
+   <!-- 邮件导入 -->
+   <div id="method-email" hidden>
+    <div class="card empty">邮件导入正在整合中：以后会自动读取银行 / 支付的通知邮件，识别出的交易同样先进入待核对。</div>
+   </div>
+
+   <!-- 截图识别 -->
+   <div id="method-screenshot" hidden>
     <div class="card settings">
       <label>来源<select id="source">
         <option value="wechat">微信 · 零钱明细</option>
@@ -146,19 +224,20 @@
         </table>
       </div>
       <div id="no-pending" class="empty" hidden>没有待核对的交易</div>
-      <div class="legend"><span class="sw" style="background:var(--income)"></span> 收入（请确认种类）　<span class="sw" style="background:var(--suspect)"></span> 疑似重复（日期金额相同、商户不同，默认不勾选）　⚠ 日期或正负号是推测的　日期格式 2026/10/29 22:12:00<br>修改会自动保存；入库后只能改描述，其他内容请在提交前核对好</div>
+      <div class="legend"><span class="sw" style="background:var(--income)"></span> 收入（请确认种类）　<span class="sw" style="background:var(--suspect)"></span> 疑似重复（日期金额相同、商户不同，默认不勾选）　⚠ 日期或正负号是推测的　日期格式 2026/10/29 22:12:00<br>修改会自动保存；入库后只能改种类和描述，其他内容请在提交前核对好</div>
       <div class="bar">
         <button id="confirm">提交入库</button>
         <button id="delete-checked" class="danger">删除所选</button>
       </div>
       <details id="skipped" hidden><summary></summary><div class="table-wrap"><table><tbody id="skipped-rows"></tbody></table></div></details>
     </div>
+   </div>
   </section>
 
   <!-- ===== 交易 ===== -->
   <section id="view-transactions" hidden>
     <div class="card settings">
-      <label>来源<select id="tx-source"></select></label>
+      <label>添加方式<select id="tx-source"></select></label>
       <label>从<input id="tx-from" type="date"></label>
       <label>到<input id="tx-to" type="date"></label>
     </div>
@@ -170,14 +249,14 @@
         </table>
       </div>
       <div class="bar"><span id="tx-status" class="status"></span></div>
-      <div class="legend">点一行查看原截图。入库后只能修改描述，改完自动保存</div>
+      <div class="legend">截图识别的交易点一行可以查看原截图。入库后只能修改种类和描述，改完自动保存</div>
     </div>
   </section>
 
   <!-- ===== 导出 ===== -->
   <section id="view-export" hidden>
     <div class="card settings">
-      <label>来源<select id="ex-source"></select></label>
+      <label>添加方式<select id="ex-source"></select></label>
       <label>从<input id="ex-from" type="date"></label>
       <label>到<input id="ex-to" type="date"></label>
       <label>显示<select id="ex-show">
@@ -274,7 +353,7 @@ async function api(path, opts = {}) {
   if (res.status === 401) { location.href = "/login"; throw new Error("请先登录"); }
   const isJson = (res.headers.get("content-type") || "").includes("json");
   const data = isJson ? await res.json() : res;
-  if (!res.ok) throw new Error((isJson && data.detail) || res.statusText);
+  if (!res.ok) throw new Error((isJson && (data.detail?.message ?? data.detail)) || res.statusText);
   return data;
 }
 const send = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -300,13 +379,15 @@ function flash(el, msg) { $(el).textContent = msg; }
 
 // ---------- views ----------
 
-const VIEWS = ["recognize", "transactions", "export", "security"];
+const VIEWS = ["add", "transactions", "export", "security"];
 function route() {
-  const view = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "recognize";
+  let view = location.hash.slice(1);
+  if (view === "recognize") { view = "add"; showMethod("screenshot"); } // old bookmark
+  if (!VIEWS.includes(view)) view = "add";
   for (const v of VIEWS) $("view-" + v).hidden = v !== view;
   for (const a of document.querySelectorAll("nav a")) a.classList.toggle("active", a.dataset.view === view);
   showImage(null);
-  if (view === "recognize") loadPending();
+  if (view === "add") { if (method === "screenshot") loadPending(); loadSuggestions(); }
   if (view === "transactions") loadTransactions();
   if (view === "export") { loadExportRows(); loadExportHistory(); }
   if (view === "security") loadSecurity();
@@ -317,6 +398,250 @@ $("logout").onclick = async () => {
   await api("/api/logout", { method: "POST" }).catch(() => {});
   location.href = "/login";
 };
+
+// ---------- add: ways of adding a record ----------
+
+const METHODS = ["screenshot", "manual", "email"];
+let method = METHODS.includes(load("tx.method")) ? load("tx.method") : "screenshot";
+function showMethod(m) {
+  method = m;
+  save("tx.method", m);
+  for (const x of METHODS) $("method-" + x).hidden = x !== m;
+  for (const b of document.querySelectorAll(".tabs button")) b.classList.toggle("active", b.dataset.method === m);
+}
+function setMethod(m) {
+  showMethod(m);
+  showImage(null);
+  if (m === "screenshot") loadPending();
+  if (m === "manual") focusManual();
+}
+document.querySelector(".tabs").addEventListener("click", e => {
+  const b = e.target.closest("[data-method]");
+  if (b) setMethod(b.dataset.method);
+});
+
+// ---------- add: manual entry ----------
+
+// Registered accounts (each with the currencies it is used with, most used first) and currencies
+let sugg = { accounts: [], currencies: [], categories: [] };
+let accountCurrencies = new Map(); // account name -> [currency, ...]
+const optionList = list => [...new Set(list)].map(v => `<option value="${esc(v)}">`).join("");
+async function loadSuggestions() {
+  try { sugg = await api("/api/suggestions"); } catch { return; }
+  accountCurrencies = new Map(sugg.accounts.map(a => [a.name, a.currencies]));
+  $("m-accounts").innerHTML = optionList(accountCurrencies.keys());
+  // Defaults of the screenshot sources count too, so a fresh database still offers something
+  $("m-categories").innerHTML = optionList([...sugg.categories, ...Object.values(SOURCES).map(s => s.defaults.category)]);
+  currencyLists(); // not a full re-render, which would disturb a cell being typed in
+}
+// Each row offers its account's currencies first, then the rest
+function currencyLists() {
+  $("m-cur-lists").innerHTML = mRows.map(r =>
+    `<datalist id="m-cur-${r.key}">${optionList([...(accountCurrencies.get(r.account.trim()) ?? []), ...sugg.currencies])}</datalist>`).join("");
+}
+// What these rows would add to the lists (same rules as the server's unknown_accounts)
+function unknownAccounts(rows) {
+  const out = { accounts: new Map(), currencies: new Set(), pairs: [] };
+  for (const { account: a, currency: c } of rows) {
+    const known = accountCurrencies.get(a);
+    if (!known) { if (!out.accounts.has(a)) out.accounts.set(a, new Set()); out.accounts.get(a).add(c); }
+    else if (!known.includes(c) && !out.pairs.some(([x, y]) => x === a && y === c)) out.pairs.push([a, c]);
+    if (!sugg.currencies.includes(c)) out.currencies.add(c);
+  }
+  return out;
+}
+
+// A row: { key, dt ("2026-11-06T14:30:05", as <input type=datetime-local step=1> uses), account, currency,
+//          sign (-1 expense / 1 income), amount (text as typed), category, description }
+const nowLocal = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+let mKey = 1;
+function newManualRow(prev) {
+  const last = prev ?? JSON.parse(load("tx.manual.last") || "null") ?? {};
+  return { key: mKey++, dt: prev ? prev.dt : nowLocal(), account: last.account ?? "", currency: last.currency ?? "",
+           sign: -1, amount: "", category: last.category ?? "", description: "" };
+}
+let mRows = (() => {
+  try {
+    const saved = JSON.parse(load("tx.manual.draft") || "[]");
+    if (saved.length) return saved.map(r => ({ ...r, key: mKey++ }));
+  } catch {}
+  return [newManualRow()];
+})();
+const saveManualDraft = () => save("tx.manual.draft", JSON.stringify(mRows.filter(r => r.amount || r.description)));
+
+function renderManual() {
+  const active = document.activeElement?.dataset ?? {};
+  $("m-rows").innerHTML = mRows.map(r => `<tr class="${r.sign > 0 ? "income" : ""}">
+    <td class="dt"><input type="datetime-local" step="1" data-m="${r.key}" data-k="dt" value="${esc(r.dt)}"></td>
+    <td><input data-m="${r.key}" data-k="account" value="${esc(r.account)}" list="m-accounts"></td>
+    <td><input data-m="${r.key}" data-k="currency" value="${esc(r.currency)}" list="m-cur-${r.key}"></td>
+    <td><button class="sign ${r.sign > 0 ? "in" : ""}" data-sign="${r.key}" title="点击切换支出 / 收入">${r.sign > 0 ? "收入" : "支出"}</button></td>
+    <td class="amt"><input data-m="${r.key}" data-k="amount" value="${esc(r.amount)}" inputmode="decimal" placeholder="0.00"></td>
+    <td><input data-m="${r.key}" data-k="category" value="${esc(r.category)}" list="m-categories"></td>
+    <td><input data-m="${r.key}" data-k="description" value="${esc(r.description)}"></td>
+    <td><button class="icon" data-m-del="${r.key}" title="删除这一行" tabindex="-1">✕</button></td></tr>`).join("");
+  currencyLists();
+  const n = mRows.filter(r => r.amount.trim()).length;
+  $("m-save").textContent = `入库（${n} 条）`;
+  $("m-save").disabled = n === 0;
+  if (active.m && active.k) $("m-rows").querySelector(`[data-m="${active.m}"][data-k="${active.k}"]`)?.focus();
+}
+const mById = key => mRows.find(r => r.key === +key);
+function focusManual(key, k = "amount") {
+  const r = key ? mById(key) : mRows.find(r => !r.amount) ?? mRows[mRows.length - 1];
+  if (r) $("m-rows").querySelector(`[data-m="${r.key}"][data-k="${k}"]`)?.focus();
+}
+function addManualRow() {
+  const r = newManualRow(mRows[mRows.length - 1]);
+  mRows.push(r);
+  renderManual();
+  return r;
+}
+
+$("m-rows").addEventListener("input", e => {
+  const { m, k } = e.target.dataset;
+  const r = m && mById(m);
+  if (!r) return;
+  r[k] = e.target.value;
+  if (k === "amount") {
+    // A leading + or - sets the sign
+    const sign = r.amount.trim()[0];
+    if (sign === "+" || sign === "-") {
+      r.sign = sign === "+" ? 1 : -1;
+      r.amount = e.target.value = r.amount.trim().slice(1);
+      const tr = e.target.closest("tr");
+      tr.classList.toggle("income", r.sign > 0);
+      const b = tr.querySelector("[data-sign]");
+      b.classList.toggle("in", r.sign > 0);
+      b.textContent = r.sign > 0 ? "收入" : "支出";
+    }
+    const n = mRows.filter(r => r.amount.trim()).length;
+    $("m-save").textContent = `入库（${n} 条）`;
+    $("m-save").disabled = n === 0;
+  }
+  e.target.classList.remove("invalid");
+  saveManualDraft();
+});
+$("m-rows").addEventListener("change", e => {
+  const { m, k } = e.target.dataset;
+  const r = m && mById(m);
+  if (!r || k !== "account") return;
+  // The currency follows the account: kept if the account is used with it, else its most used one
+  const curs = accountCurrencies.get(r.account.trim());
+  if (curs?.length && !curs.includes(r.currency.trim())) r.currency = curs[0];
+  renderManual();
+  saveManualDraft();
+});
+$("m-rows").addEventListener("click", e => {
+  const sign = e.target.dataset.sign;
+  if (sign) { const r = mById(sign); r.sign = -r.sign; renderManual(); saveManualDraft(); return; }
+  const del = e.target.dataset.mDel;
+  if (del) {
+    mRows = mRows.filter(r => r.key !== +del);
+    if (!mRows.length) mRows.push(newManualRow());
+    renderManual();
+    saveManualDraft();
+  }
+});
+// Enter: same column, next row (Shift+Enter: previous); on the last row, add one
+$("m-rows").addEventListener("keydown", e => {
+  if (e.key !== "Enter" || e.isComposing || !e.target.dataset.k) return;
+  e.preventDefault();
+  const { m, k } = e.target.dataset;
+  const i = mRows.findIndex(r => r.key === +m);
+  const next = e.shiftKey ? mRows[i - 1] : mRows[i + 1] ?? (e.shiftKey ? null : addManualRow());
+  if (next) focusManual(next.key, k);
+});
+$("m-rows").addEventListener("focusin", e => { if (e.target.dataset.k && e.target.type !== "datetime-local") e.target.select(); });
+$("m-add").onclick = () => focusManual(addManualRow().key);
+
+$("m-save").onclick = async () => {
+  const todo = mRows.filter(r => r.amount.trim());
+  let bad = null;
+  const rows = todo.map(r => {
+    const amount = parseAmount(r.amount);
+    const dt = r.dt && parseDate(r.dt.replace("T", " "));
+    const missing = !dt ? "dt" : !amount ? "amount" : ["account", "currency", "category"].find(k => !r[k].trim());
+    if (missing) bad ??= { r, k: missing };
+    return { date: dt?.date, account: r.account.trim(), currency: r.currency.trim(),
+             amount: r.sign * Math.abs(amount), category: r.category.trim(), description: r.description.trim() };
+  });
+  if (bad) {
+    const el = $("m-rows").querySelector(`[data-m="${bad.r.key}"][data-k="${bad.k}"]`);
+    el?.classList.add("invalid");
+    el?.focus();
+    return flash("m-status", { dt: "请填写日期时间", amount: `金额不对：「${bad.r.amount}」`,
+      account: "请填写账户", currency: "请填写币种", category: "请填写种类" }[bad.k]);
+  }
+  flash("m-status", "");
+  openConfirm(todo, rows);
+};
+
+let pendingSave = null; // { todo, rows, add } while the dialog is open
+function openConfirm(todo, rows) {
+  const unknown = unknownAccounts(rows);
+  const add = unknown.accounts.size + unknown.currencies.size + unknown.pairs.length > 0;
+  pendingSave = { todo, rows, add };
+  $("m-confirm-title").textContent = `确认入库 ${rows.length} 笔`;
+  const items = [
+    ...[...unknown.accounts].map(([a, cs]) => `新账户「${esc(a)}」（币种：${[...cs].map(esc).join("、")}）`),
+    ...unknown.pairs.map(([a, c]) => `账户「${esc(a)}」新增币种「${esc(c)}」`),
+    ...[...unknown.currencies].map(c => `新币种「${esc(c)}」`),
+  ];
+  $("m-confirm-new").hidden = !add;
+  $("m-confirm-new").innerHTML = add ? `下面这些还没登记过，确认后会一起新增：<ul>${items.map(i => `<li>${i}</li>`).join("")}</ul>如果是填错了，请点「返回修改」。` : "";
+  const sorted = [...rows].sort((a, b) => a.date.localeCompare(b.date));
+  $("m-confirm-rows").innerHTML = sorted.map(t => `<tr class="${t.amount > 0 ? "income" : ""}">
+    <td>${esc(t.date)}</td><td>${esc(parseDate(t.date).weekday)}</td><td>${esc(t.account)}</td><td>${esc(t.currency)}</td>
+    <td class="num">${fmtAmount(t.amount)}</td><td>${esc(t.category)}</td><td class="wrap">${esc(t.description)}</td></tr>`).join("");
+  // Totals per currency, so a slipped digit stands out
+  const totals = new Map();
+  for (const t of rows) {
+    const x = totals.get(t.currency) ?? { out: 0, in: 0 };
+    x[t.amount < 0 ? "out" : "in"] += t.amount;
+    totals.set(t.currency, x);
+  }
+  $("m-confirm-totals").innerHTML = "合计：" + [...totals].map(([c, x]) =>
+    `${esc(c)} ${[x.out && `支出 ${fmtAmount(-x.out)}`, x.in && `收入 ${fmtAmount(x.in)}`].filter(Boolean).join("，")}`).join("；");
+  $("m-confirm-ok").textContent = add ? `新增并入库 ${rows.length} 笔` : `确认入库 ${rows.length} 笔`;
+  $("m-confirm-ok").disabled = false;
+  $("m-confirm").showModal();
+  $("m-confirm-cancel").focus(); // a stray Enter goes back rather than storing
+}
+$("m-confirm-cancel").onclick = () => $("m-confirm").close();
+$("m-confirm").addEventListener("close", () => { pendingSave = null; });
+$("m-confirm-ok").onclick = async () => {
+  if (!pendingSave) return;
+  const { todo, rows, add } = pendingSave;
+  $("m-confirm-ok").disabled = true;
+  try {
+    await api("/api/transactions", send("POST", { rows, add_accounts: add }));
+    $("m-confirm").close();
+    const last = todo[todo.length - 1];
+    save("tx.manual.last", JSON.stringify({ account: last.account, currency: last.currency, category: last.category }));
+    showRecent(rows);
+    mRows = mRows.filter(r => !r.amount.trim()); // rows without an amount stay
+    if (!mRows.length) mRows.push(newManualRow());
+    saveManualDraft();
+    renderManual();
+    flash("m-status", `已入库 ${rows.length} 条`);
+    loadSuggestions();
+    focusManual();
+  } catch (e) {
+    $("m-confirm").close();
+    flash("m-status", "入库失败：" + e.message);
+    loadSuggestions(); // the lists may have changed elsewhere
+  }
+};
+
+let recent = [];
+function showRecent(rows) {
+  recent = rows.map(r => ({ ...r, weekday: parseDate(r.date).weekday })).concat(recent).slice(0, 50);
+  $("m-recent").hidden = false;
+  $("m-recent-rows").innerHTML = recent.map(t => `<tr class="${t.amount > 0 ? "income" : ""}">
+    <td>${esc(t.date)}</td><td>${esc(t.weekday)}</td><td>${esc(t.account)}</td><td>${esc(t.currency)}</td>
+    <td class="num">${fmtAmount(t.amount)}</td><td>${esc(t.category)}</td><td class="wrap">${esc(t.description)}</td></tr>`).join("");
+}
 
 // ---------- recognize: settings ----------
 
@@ -626,8 +951,9 @@ document.addEventListener("keydown", e => { if (e.key === "Escape" && viewing) s
 // ---------- transactions ----------
 
 for (const p of ["tx", "ex"]) {
-  $(p + "-source").innerHTML = `<option value="">全部来源</option>` +
-    Object.entries(SOURCE_LABELS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("");
+  $(p + "-source").innerHTML = `<option value="">全部</option><option value="manual">手动输入</option>` +
+    `<optgroup label="截图识别">` +
+    Object.entries(SOURCE_LABELS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("") + `</optgroup>`;
 }
 function filterQuery(p) {
   const q = new URLSearchParams();
@@ -645,22 +971,30 @@ async function loadTransactions() {
   } catch (e) {
     return flash("tx-status", "读取失败：" + e.message);
   }
-  $("tx-rows").innerHTML = txRows.map(t => `<tr class="clickable" data-img-id="${t.image_id}" data-name="${esc(t.image_name)}" title="点击查看原截图">
+  $("tx-rows").innerHTML = txRows.map(t => {
+    const shot = t.image_id != null; // manual rows have no screenshot to show
+    return `<tr class="${shot ? "clickable" : ""}" ${shot ? `data-img-id="${t.image_id}" data-name="${esc(t.image_name)}" title="点击查看原截图"` : ""}>
     <td>${esc(t.date)}</td><td>${esc(t.weekday)}</td><td>${esc(t.account)}</td><td>${esc(t.currency)}</td>
     <td class="num">${fmtAmount(t.amount)}</td>
     <td><input data-tx="${t.id}" data-k="category" value="${esc(t.category)}"></td>
     <td><input data-tx="${t.id}" data-k="description" value="${esc(t.description)}"></td>
-    <td>${t.export_count ? `<span class="tag done" title="最近一次：${esc(fmtTime(t.last_export))}">已导出${t.export_count > 1 ? " ×" + t.export_count : ""}</span>` : ""}</td></tr>`).join("");
+    <td>${t.export_count ? `<span class="tag done" title="最近一次：${esc(fmtTime(t.last_export))}">已导出${t.export_count > 1 ? " ×" + t.export_count : ""}</span>` : ""}</td></tr>`;
+  }).join("");
   flash("tx-status", txRows.length ? `共 ${txRows.length} 条` : "没有符合条件的交易");
 }
 for (const id of ["tx-source", "tx-from", "tx-to"]) $(id).addEventListener("change", loadTransactions);
 $("tx-rows").addEventListener("change", async e => {
   const { tx: id, k } = e.target.dataset;
   if (!id) return;
+  const value = e.target.value;
+  const t = txRows.find(t => t.id === +id);
+  if (k === "category" && !value.trim()) {
+    e.target.value = t?.category ?? "";
+    return flash("tx-status", "种类不能为空");
+  }
   try {
-    await api(`/api/transactions/${id}`, send("PATCH", { [k]: e.target.value }));
-    const t = txRows.find(t => t.id === +id);
-    if (t) t[k] = e.target.value;
+    await api(`/api/transactions/${id}`, send("PATCH", { [k]: value }));
+    if (t) t[k] = value;
     flash("tx-status", (k === "category" ? "种类" : "描述") + "已保存");
   } catch (err) {
     flash("tx-status", "保存失败：" + err.message);
@@ -765,6 +1099,8 @@ $("sec-logout-all").onclick = async () => {
 
 // Show the logout button only when login is on
 api("/api/security").then(d => { $("logout").hidden = !d.auth; }).catch(() => {});
+renderManual();
+showMethod(method);
 route();
 </script>
 </body>

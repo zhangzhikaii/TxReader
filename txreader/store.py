@@ -5,7 +5,7 @@ import threading
 from dataclasses import asdict
 from datetime import datetime
 
-from .db import connect, now, save_image, sha256
+from .db import connect, now, register_accounts, save_image, sha256
 from .matching import match_rows
 from .models import Tx
 from .ocr import decode_image
@@ -200,6 +200,7 @@ def confirm(rows: list[dict]) -> int:
                 (row["id"], date, _weekday(date), str(row.get("account", "")), str(row.get("currency", "")),
                  amount, str(row.get("category", "")), str(row.get("description", "")), t, t))
             conn.execute("UPDATE ocr_rows SET status = 'confirmed' WHERE id = ?", (row["id"],))
+        register_accounts(conn, [(r.get("account"), r.get("currency")) for r in rows])
     return len(rows)
 
 
@@ -207,9 +208,12 @@ def confirm(rows: list[dict]) -> int:
 
 def list_transactions(source: str | None = None, date_from: str | None = None,
                       date_to: str | None = None) -> list[dict]:
-    """date_from / date_to are inclusive, as 2026-10-01 or 2026/10/01."""
+    """source is a screenshot source key, or "manual" for rows typed in by hand.
+    date_from / date_to are inclusive, as 2026-10-01 or 2026/10/01."""
     where, args = [], []
-    if source:
+    if source == "manual":
+        where.append("t.origin = 'manual'")
+    elif source:
         where.append("r.source = ?")
         args.append(source)
     if date_from:
@@ -222,28 +226,135 @@ def list_transactions(source: str | None = None, date_from: str | None = None,
         rows = conn.execute(
             "SELECT t.*, r.source, r.image_id, i.filename AS image_name,"
             " COUNT(e.id) AS export_count, MAX(e.at) AS last_export"
-            " FROM transactions t JOIN ocr_rows r ON r.id = t.ocr_row_id JOIN images i ON i.id = r.image_id"
+            " FROM transactions t LEFT JOIN ocr_rows r ON r.id = t.ocr_row_id"
+            " LEFT JOIN images i ON i.id = r.image_id"
             " LEFT JOIN export_items ei ON ei.transaction_id = t.id"
             " LEFT JOIN exports e ON e.id = ei.export_id"
             + (" WHERE " + " AND ".join(where) if where else "") +
-            " GROUP BY t.id ORDER BY t.date, r.image_id, r.pos DESC",
+            " GROUP BY t.id ORDER BY t.date, r.image_id, r.pos DESC, t.id",
             args).fetchall()
     return [dict(r) for r in rows]
 
 
-TX_EDITABLE = ("category", "description")  # once stored, only these can still change
+TX_FIELDS = ("date", "account", "currency", "amount", "category", "description")
+TX_REQUIRED = ("date", "account", "currency", "amount", "category")
+TX_EDITABLE = ("category", "description")  # once stored, however it was added, only these can change
+
+
+def _clean_tx(row: dict, keys) -> dict:
+    out = {}
+    for k in keys:
+        v = row.get(k)
+        if v is None:
+            continue
+        if k == "date":
+            out["date"] = _check_date(v)
+            out["weekday"] = _weekday(v)
+        elif k == "amount":
+            amount = round(float(v), 2)
+            if not amount:
+                raise ValueError("金额不能为 0")
+            out["amount"] = amount
+        else:
+            out[k] = str(v).strip()
+    return out
+
+
+def account_lists(conn=None) -> dict:
+    """{"accounts": [{"name", "currencies": [...]}], "currencies": [...]}, most used first."""
+    if conn is None:
+        with connect() as conn:
+            return account_lists(conn)
+    used = lambda col: f"(SELECT COUNT(*) FROM transactions t WHERE t.{col} = x.name)"
+    currencies = [r[0] for r in conn.execute(
+        f"SELECT name FROM currencies x ORDER BY {used('currency')} DESC, id")]
+    accounts = [{"name": r["name"], "currencies": []} for r in conn.execute(
+        f"SELECT id, name FROM accounts x ORDER BY {used('account')} DESC, id")]
+    by_name = {a["name"]: a for a in accounts}
+    for r in conn.execute(
+            "SELECT a.name AS account, c.name AS currency FROM account_currencies ac"
+            " JOIN accounts a ON a.id = ac.account_id JOIN currencies c ON c.id = ac.currency_id"
+            " ORDER BY (SELECT COUNT(*) FROM transactions t WHERE t.account = a.name AND t.currency = c.name) DESC,"
+            " c.id"):
+        by_name[r["account"]]["currencies"].append(r["currency"])
+    return {"accounts": accounts, "currencies": currencies}
+
+
+def unknown_accounts(rows: list[dict], lists: dict) -> dict:
+    """What the rows would add to the lists: new accounts, new currencies, and known accounts
+    used with a currency they haven't had before."""
+    known = {a["name"]: set(a["currencies"]) for a in lists["accounts"]}
+    out = {"accounts": [], "currencies": [], "pairs": []}
+    for r in rows:
+        a, c = r["account"], r["currency"]
+        if a not in known and a not in out["accounts"]:
+            out["accounts"].append(a)
+        if c not in lists["currencies"] and c not in out["currencies"]:
+            out["currencies"].append(c)
+        if a in known and c not in known[a] and [a, c] not in out["pairs"]:
+            out["pairs"].append([a, c])
+    return out
+
+
+class UnknownAccounts(ValueError):
+    def __init__(self, unknown: dict):
+        self.unknown = unknown
+        parts = [f"新账户 {'、'.join(unknown['accounts'])}" if unknown["accounts"] else "",
+                 f"新币种 {'、'.join(unknown['currencies'])}" if unknown["currencies"] else "",
+                 "、".join(f"{a} 的新币种 {c}" for a, c in unknown["pairs"])]
+        super().__init__("有还没登记的：" + "；".join(p for p in parts if p) + "。确认要新增后再提交")
+
+
+def add_manual(rows: list[dict], add_accounts: bool = False) -> list[int]:
+    """Store transactions typed in by hand. Each row: date, account, currency, amount,
+    category, description. All or nothing.
+
+    Accounts, currencies and account-currency pairs not on the lists yet are added only with
+    add_accounts (the user has been asked); otherwise UnknownAccounts is raised."""
+    cleaned = []
+    for row in rows:
+        tx = _clean_tx(row, TX_FIELDS)
+        if any(not tx.get(k) for k in TX_REQUIRED):
+            raise ValueError("每一笔都要填日期、账户、币种、金额和种类")
+        cleaned.append(tx)
+    ids = []
+    with connect() as conn:
+        unknown = unknown_accounts(cleaned, account_lists(conn))
+        if any(unknown.values()):
+            if not add_accounts:
+                raise UnknownAccounts(unknown)
+            register_accounts(conn, [(tx["account"], tx["currency"]) for tx in cleaned])
+        for tx in cleaned:
+            t = now()
+            ids.append(conn.execute(
+                "INSERT INTO transactions (origin, date, weekday, account, currency, amount, category,"
+                " description, confirmed_at, updated_at) VALUES ('manual', ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                (tx["date"], tx["weekday"], tx["account"], tx["currency"], tx["amount"],
+                 tx["category"], tx.get("description", ""), t, t)).fetchone()[0])
+    return ids
 
 
 def update_transaction(tx_id: int, changes: dict) -> None:
-    fields = {k: str(v) for k, v in changes.items() if k in TX_EDITABLE and v is not None}
+    fields = _clean_tx(changes, TX_EDITABLE)
     if not fields:
-        raise ValueError("没有可修改的字段")
+        raise ValueError("入库后只能修改种类和描述")
+    if "category" in fields and not fields["category"]:
+        raise ValueError("种类不能为空")
     with connect() as conn:
         n = conn.execute(
             "UPDATE transactions SET " + ", ".join(f"{k} = ?" for k in fields) + ", updated_at = ? WHERE id = ?",
             (*fields.values(), now(), tx_id)).rowcount
     if not n:
         raise NotFound(tx_id)
+
+
+def suggestions() -> dict:
+    """What to offer while typing: the account and currency lists, and the categories used so
+    far (most used first)."""
+    with connect() as conn:
+        categories = [r[0] for r in conn.execute(
+            "SELECT category FROM transactions WHERE category != '' GROUP BY category ORDER BY COUNT(*) DESC")]
+        return {**account_lists(conn), "categories": categories}
 
 
 def image_file(image_id: int) -> tuple[str, str]:

@@ -38,7 +38,7 @@ def not_found(request: Request, exc: store.NotFound):
 
 def _client(request: Request) -> tuple[str | None, str | None]:
     # The connecting address. Behind a reverse proxy this becomes the proxy's address
-    # (see docs/cloud-plan.md, 以后再定).
+    # (see docs/plan.md, 以后再定).
     return (request.client.host if request.client else None), request.headers.get("user-agent")
 
 
@@ -161,12 +161,39 @@ def image(image_id: int):
 
 @app.get("/api/transactions")
 def transactions(source: str | None = None, date_from: str | None = None, date_to: str | None = None):
+    """source: a screenshot source key, or "manual"."""
     return {"transactions": store.list_transactions(source, date_from, date_to)}
+
+
+class TransactionFields(BaseModel):
+    date: str | None = None
+    account: str | None = None
+    currency: str | None = None
+    amount: float | None = None
+    category: str | None = None
+    description: str | None = None
 
 
 class TransactionEdit(BaseModel):
     category: str | None = None
     description: str | None = None
+
+
+class ManualBody(BaseModel):
+    rows: list[TransactionFields]
+    add_accounts: bool = False  # the user agreed to add accounts / currencies not on the lists yet
+
+
+@app.post("/api/transactions")
+def add_transactions(body: ManualBody):
+    """Transactions typed in by hand, stored right away."""
+    try:
+        ids = store.add_manual([r.model_dump() for r in body.rows], body.add_accounts)
+    except store.UnknownAccounts as e:
+        raise HTTPException(409, {"message": str(e), "unknown": e.unknown})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ids": ids}
 
 
 @app.patch("/api/transactions/{tx_id}")
@@ -176,6 +203,11 @@ def edit_transaction(tx_id: int, body: TransactionEdit):
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"ok": True}
+
+
+@app.get("/api/suggestions")
+def suggestions():
+    return store.suggestions()
 
 
 class ExportBody(BaseModel):
