@@ -105,6 +105,22 @@
   td button.sign { width:56px; padding:4px 0; background:#fee2e2; color:#b91c1c; }
   td button.sign.in { background:#fef3c7; color:#92400e; }
   .muted { color:var(--muted); }
+  /* Settings lists */
+  /* Drag handle: hold and drag to reorder (pointer events, so touch works too) */
+  .handle { display:inline-block; padding:2px 8px; color:var(--muted); font-size:16px; cursor:grab;
+            touch-action:none; user-select:none; border-radius:4px; }
+  .handle:hover { color:var(--text); background:var(--line); }
+  tr.dragging { background:#ecfdf5; box-shadow:0 2px 8px rgba(0,0,0,.12); }
+  body.reordering, body.reordering * { cursor:grabbing !important; user-select:none; }
+  .chip { display:inline-flex; align-items:center; gap:2px; padding:1px 4px 1px 8px; margin:2px 4px 2px 0;
+          border-radius:12px; background:#eef2ff; font-size:13px; }
+  .chip button { padding:0 5px; background:none; color:var(--muted); font-size:13px; line-height:1.4; }
+  .chip button:hover { color:#b91c1c; }
+  .chip button:disabled { display:none; }
+  td select.add-cur { padding:2px 4px; font-size:13px; }
+  .add-row { display:flex; gap:8px; margin-top:12px; }
+  .add-row input { max-width:240px; }
+  .settings-help { font-size:13px; color:var(--muted); margin:-4px 0 12px; }
   /* Confirmation before storing manual rows */
   dialog { border:0; border-radius:12px; padding:20px; width:min(860px, calc(100vw - 32px)); max-height:calc(100vh - 48px);
            box-shadow:0 20px 50px rgba(0,0,0,.25); color:var(--text); }
@@ -124,6 +140,7 @@
       <a href="#add" data-view="add">记一笔</a>
       <a href="#transactions" data-view="transactions">交易</a>
       <a href="#export" data-view="export">导出</a>
+      <a href="#settings" data-view="settings">设置</a>
       <a href="#security" data-view="security">登录记录</a>
     </nav>
     <button id="logout" class="secondary" hidden>退出</button>
@@ -198,9 +215,9 @@
         <option value="suica">Suica · Apple 钱包交易详情</option>
         <option value="receipt">小票 · 纸质收据照片</option>
       </select></label>
-      <label>账户<input id="account" value="微信"></label>
+      <label>账户<input id="account" value="微信" list="m-accounts"></label>
       <label>币种<input id="currency" value="人民币"></label>
-      <label>默认种类<input id="category" value="饮食费"></label>
+      <label>默认种类<input id="category" value="饮食费" list="m-categories"></label>
       <label>年份<input id="year" type="number"></label>
       <label>日期排序<select id="order">
         <option value="asc">正序（旧 → 新）</option>
@@ -286,6 +303,38 @@
         </table>
       </div>
     </div>
+  </section>
+
+  <!-- ===== 设置 ===== -->
+  <section id="view-settings" hidden>
+    <div class="card">
+      <h2>账户</h2>
+      <p class="settings-help">每个账户可以有多个币种（比如现金同时有日元和人民币）。手动输入时按这里的顺序提示</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th></th><th>名称</th><th>币种</th><th class="num">交易</th><th></th></tr></thead>
+        <tbody id="set-accounts"></tbody>
+      </table></div>
+      <div class="add-row"><input id="set-accounts-new" placeholder="新账户名称"><button class="secondary" data-add="accounts">添加账户</button></div>
+    </div>
+    <div class="card">
+      <h2>币种</h2>
+      <p class="settings-help">本位币是统计时折算成的币种（默认人民币）。账户结余、月度收支的列按这里的顺序</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th></th><th>名称</th><th>本位币</th><th class="num">交易</th><th></th></tr></thead>
+        <tbody id="set-currencies"></tbody>
+      </table></div>
+      <div class="add-row"><input id="set-currencies-new" placeholder="新币种名称"><button class="secondary" data-add="currencies">添加币种</button></div>
+    </div>
+    <div class="card">
+      <h2>种类</h2>
+      <p class="settings-help">月度收支表的行按这里的顺序</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th></th><th>名称</th><th class="num">交易</th><th></th></tr></thead>
+        <tbody id="set-categories"></tbody>
+      </table></div>
+      <div class="add-row"><input id="set-categories-new" placeholder="新种类名称"><button class="secondary" data-add="categories">添加种类</button></div>
+    </div>
+    <div class="legend">按住左边的 ☰ 上下拖动调整顺序。改名会把已有交易里的名称一起改掉；有交易在用的不能删除。<span id="set-status" class="status"></span></div>
   </section>
 
   <!-- ===== 登录记录 ===== -->
@@ -379,7 +428,7 @@ function flash(el, msg) { $(el).textContent = msg; }
 
 // ---------- views ----------
 
-const VIEWS = ["add", "transactions", "export", "security"];
+const VIEWS = ["add", "transactions", "export", "settings", "security"];
 function route() {
   let view = location.hash.slice(1);
   if (view === "recognize") { view = "add"; showMethod("screenshot"); } // old bookmark
@@ -390,6 +439,7 @@ function route() {
   if (view === "add") { if (method === "screenshot") loadPending(); loadSuggestions(); }
   if (view === "transactions") loadTransactions();
   if (view === "export") { loadExportRows(); loadExportHistory(); }
+  if (view === "settings") loadSettings();
   if (view === "security") loadSecurity();
 }
 window.addEventListener("hashchange", route);
@@ -422,16 +472,19 @@ document.querySelector(".tabs").addEventListener("click", e => {
 
 // ---------- add: manual entry ----------
 
-// Registered accounts (each with the currencies it is used with, most used first) and currencies
+// The lists from the settings page, in their order: accounts (each with its currencies, most
+// used first), currencies, categories
 let sugg = { accounts: [], currencies: [], categories: [] };
 let accountCurrencies = new Map(); // account name -> [currency, ...]
+let knownCurrencies = new Set(), knownCategories = new Set();
 const optionList = list => [...new Set(list)].map(v => `<option value="${esc(v)}">`).join("");
 async function loadSuggestions() {
   try { sugg = await api("/api/suggestions"); } catch { return; }
   accountCurrencies = new Map(sugg.accounts.map(a => [a.name, a.currencies]));
+  knownCurrencies = new Set(sugg.currencies);
+  knownCategories = new Set(sugg.categories);
   $("m-accounts").innerHTML = optionList(accountCurrencies.keys());
-  // Defaults of the screenshot sources count too, so a fresh database still offers something
-  $("m-categories").innerHTML = optionList([...sugg.categories, ...Object.values(SOURCES).map(s => s.defaults.category)]);
+  $("m-categories").innerHTML = optionList(sugg.categories);
   currencyLists(); // not a full re-render, which would disturb a cell being typed in
 }
 // Each row offers its account's currencies first, then the rest
@@ -439,14 +492,15 @@ function currencyLists() {
   $("m-cur-lists").innerHTML = mRows.map(r =>
     `<datalist id="m-cur-${r.key}">${optionList([...(accountCurrencies.get(r.account.trim()) ?? []), ...sugg.currencies])}</datalist>`).join("");
 }
-// What these rows would add to the lists (same rules as the server's unknown_accounts)
-function unknownAccounts(rows) {
-  const out = { accounts: new Map(), currencies: new Set(), pairs: [] };
-  for (const { account: a, currency: c } of rows) {
+// What these rows would add to the lists (same rules as the server's lists.unknown)
+function unknownNames(rows) {
+  const out = { accounts: new Map(), currencies: new Set(), pairs: [], categories: new Set() };
+  for (const { account: a, currency: c, category: cat } of rows) {
     const known = accountCurrencies.get(a);
     if (!known) { if (!out.accounts.has(a)) out.accounts.set(a, new Set()); out.accounts.get(a).add(c); }
     else if (!known.includes(c) && !out.pairs.some(([x, y]) => x === a && y === c)) out.pairs.push([a, c]);
-    if (!sugg.currencies.includes(c)) out.currencies.add(c);
+    if (!knownCurrencies.has(c)) out.currencies.add(c);
+    if (!knownCategories.has(cat)) out.categories.add(cat);
   }
   return out;
 }
@@ -579,17 +633,18 @@ $("m-save").onclick = async () => {
 
 let pendingSave = null; // { todo, rows, add } while the dialog is open
 function openConfirm(todo, rows) {
-  const unknown = unknownAccounts(rows);
-  const add = unknown.accounts.size + unknown.currencies.size + unknown.pairs.length > 0;
+  const unknown = unknownNames(rows);
+  const add = unknown.accounts.size + unknown.currencies.size + unknown.pairs.length + unknown.categories.size > 0;
   pendingSave = { todo, rows, add };
   $("m-confirm-title").textContent = `确认入库 ${rows.length} 笔`;
   const items = [
     ...[...unknown.accounts].map(([a, cs]) => `新账户「${esc(a)}」（币种：${[...cs].map(esc).join("、")}）`),
     ...unknown.pairs.map(([a, c]) => `账户「${esc(a)}」新增币种「${esc(c)}」`),
     ...[...unknown.currencies].map(c => `新币种「${esc(c)}」`),
+    ...[...unknown.categories].map(c => `新种类「${esc(c)}」`),
   ];
   $("m-confirm-new").hidden = !add;
-  $("m-confirm-new").innerHTML = add ? `下面这些还没登记过，确认后会一起新增：<ul>${items.map(i => `<li>${i}</li>`).join("")}</ul>如果是填错了，请点「返回修改」。` : "";
+  $("m-confirm-new").innerHTML = add ? `下面这些还不在「设置」的清单里，确认后会一起新增：<ul>${items.map(i => `<li>${i}</li>`).join("")}</ul>如果是填错了，请点「返回修改」。` : "";
   const sorted = [...rows].sort((a, b) => a.date.localeCompare(b.date));
   $("m-confirm-rows").innerHTML = sorted.map(t => `<tr class="${t.amount > 0 ? "income" : ""}">
     <td>${esc(t.date)}</td><td>${esc(parseDate(t.date).weekday)}</td><td>${esc(t.account)}</td><td>${esc(t.currency)}</td>
@@ -774,10 +829,10 @@ function renderPending() {
       <td><input type="checkbox" data-check="${r.id}" ${r.checked ? "checked" : ""}></td>
       <td class="date"><input data-id="${r.id}" data-k="date" value="${esc(r.date)}" class="${r.year_guessed ? "guess" : ""}" title="${r.year_guessed ? "日期为推测，请核对" : ""}"></td>
       <td>${esc(r.weekday)}</td>
-      <td><input data-id="${r.id}" data-k="account" value="${esc(r.account)}"></td>
+      <td><input data-id="${r.id}" data-k="account" value="${esc(r.account)}" list="m-accounts"></td>
       <td><input data-id="${r.id}" data-k="currency" value="${esc(r.currency)}"></td>
       <td class="amt"><input data-id="${r.id}" data-k="amount" value="${fmtAmount(r.amount)}"></td>
-      <td><input data-id="${r.id}" data-k="category" value="${esc(r.category)}"></td>
+      <td><input data-id="${r.id}" data-k="category" value="${esc(r.category)}" list="m-categories"></td>
       <td><input data-id="${r.id}" data-k="merchant" value="${esc(r.merchant)}"></td>
       <td class="flag" title="${esc(r.suspect ? suspectTip(r.suspect) : tip)}">${warn ? "⚠" : ""}${r.suspect ? ' <span class="tag">疑似重复</span>' : ""}</td>
       <td><button class="icon ${viewing === imgKey ? "active" : ""}" data-view-img="${r.image_id}" data-name="${esc(r.image_name)}" title="查看原截图" tabindex="-1">🖼</button></td>
@@ -1072,6 +1127,125 @@ async function loadExportHistory() {
       `<tr><td colspan="3" class="empty">还没有导出过</td></tr>`;
   } catch {}
 }
+
+// ---------- settings: account / currency / category lists ----------
+
+const LIST_LABELS = { accounts: "账户", currencies: "币种", categories: "种类" };
+let lists = { accounts: [], currencies: [], categories: [] };
+async function loadSettings() {
+  try { lists = await api("/api/settings"); } catch (e) { return flash("set-status", "读取失败：" + e.message); }
+  for (const kind of Object.keys(LIST_LABELS)) renderList(kind);
+}
+function renderList(kind) {
+  const items = lists[kind];
+  $("set-" + kind).innerHTML = items.map(it => {
+    let extra = "";
+    if (kind === "accounts") {
+      const have = new Set(it.currencies.map(c => c.name));
+      const addable = lists.currencies.filter(c => !have.has(c.name));
+      extra = `<td>${it.currencies.map(c =>
+        `<span class="chip">${esc(c.name)}<button data-act="rm-cur" data-cur="${esc(c.name)}" title="${c.used ? `已有 ${c.used} 笔交易，不能去掉` : "去掉这个币种"}" ${c.used ? "disabled" : ""}>×</button></span>`).join("")}` +
+        (addable.length ? `<select class="add-cur" data-act="add-cur"><option value="">＋ 币种</option>${addable.map(c => `<option>${esc(c.name)}</option>`).join("")}</select>` : "") + `</td>`;
+    }
+    if (kind === "currencies") {
+      extra = `<td><input type="radio" name="base-cur" data-act="base" ${it.is_base ? "checked" : ""} title="设为本位币"></td>`;
+    }
+    return `<tr data-kind="${kind}" data-id="${it.id}">
+      <td>${items.length > 1 ? `<span class="handle" title="按住拖动调整顺序" aria-label="拖动调整顺序">☰</span>` : ""}</td>
+      <td><input data-act="name" value="${esc(it.name)}"></td>${extra}
+      <td class="num">${it.used}</td>
+      <td>${it.used ? "" : `<button class="icon" data-act="delete" title="删除（还没有交易用它）">✕</button>`}</td></tr>`;
+  }).join("") || `<tr><td colspan="5" class="empty">还没有${LIST_LABELS[kind]}</td></tr>`;
+}
+async function listCall(path, opts, done) {
+  try {
+    await api(path, opts);
+    flash("set-status", done);
+  } catch (e) {
+    flash("set-status", "失败：" + e.message);
+  }
+  await loadSettings();
+  loadSuggestions(); // manual entry offers the new lists
+}
+const findItem = tr => lists[tr.dataset.kind].find(x => x.id === +tr.dataset.id);
+$("view-settings").addEventListener("click", e => {
+  const add = e.target.dataset.add;
+  if (add) {
+    const input = $(`set-${add}-new`);
+    if (!input.value.trim()) return input.focus();
+    listCall(`/api/settings/${add}`, send("POST", { name: input.value }), `已添加${LIST_LABELS[add]}「${input.value.trim()}」`)
+      .then(() => { input.value = ""; input.focus(); });
+    return;
+  }
+  const act = e.target.dataset.act, tr = e.target.closest("tr[data-kind]");
+  if (!act || !tr) return;
+  const { kind } = tr.dataset, it = findItem(tr);
+  if (act === "delete") {
+    if (confirm(`删除${LIST_LABELS[kind]}「${it.name}」？`))
+      listCall(`/api/settings/${kind}/${it.id}`, { method: "DELETE" }, `已删除「${it.name}」`);
+  } else if (act === "rm-cur") {
+    listCall(`/api/settings/accounts/${it.id}/currencies/${encodeURIComponent(e.target.dataset.cur)}`, { method: "DELETE" },
+      `「${it.name}」已去掉${e.target.dataset.cur}`);
+  }
+});
+$("view-settings").addEventListener("change", e => {
+  const act = e.target.dataset.act, tr = e.target.closest("tr[data-kind]");
+  if (!act || !tr) return;
+  const { kind } = tr.dataset, it = findItem(tr);
+  const patch = (body, done) => listCall(`/api/settings/${kind}/${it.id}`, send("PATCH", body), done);
+  if (act === "name") {
+    const name = e.target.value.trim();
+    if (!name || name === it.name) { e.target.value = it.name; return; }
+    if (it.used && !confirm(`把${LIST_LABELS[kind]}「${it.name}」改名为「${name}」？\n已有 ${it.used} 笔交易会一起改。`)) {
+      e.target.value = it.name;
+      return;
+    }
+    patch({ name }, `已改名为「${name}」`);
+  } else if (act === "base") {
+    patch({ is_base: true }, `本位币改为「${it.name}」`);
+  } else if (act === "add-cur" && e.target.value) {
+    listCall(`/api/settings/accounts/${it.id}/currencies`, send("POST", { name: e.target.value }),
+      `「${it.name}」已加上${e.target.value}`);
+  }
+});
+// Drag the ☰ handle to reorder: the row follows the pointer; the new order is saved on release
+let drag = null;
+const rowIds = tbody => [...tbody.querySelectorAll("tr[data-kind]")].map(r => +r.dataset.id);
+$("view-settings").addEventListener("pointerdown", e => {
+  const handle = e.target.closest(".handle");
+  if (!handle || e.button > 0) return;
+  e.preventDefault();
+  handle.setPointerCapture(e.pointerId); // keep getting moves even outside the handle
+  const tr = handle.closest("tr");
+  drag = { tr, tbody: tr.parentElement, kind: tr.dataset.kind, before: rowIds(tr.parentElement).join() };
+  tr.classList.add("dragging");
+  document.body.classList.add("reordering");
+});
+$("view-settings").addEventListener("pointermove", e => {
+  if (!drag) return;
+  // Put the row before the first other row whose middle is below the pointer
+  const others = [...drag.tbody.querySelectorAll("tr[data-kind]")].filter(r => r !== drag.tr);
+  const next = others.find(r => { const b = r.getBoundingClientRect(); return e.clientY < b.top + b.height / 2; });
+  if (next !== drag.tr.nextElementSibling) drag.tbody.insertBefore(drag.tr, next ?? null);
+});
+function endDrag() {
+  if (!drag) return;
+  const { tr, tbody, kind, before } = drag;
+  drag = null;
+  tr.classList.remove("dragging");
+  document.body.classList.remove("reordering");
+  const ids = rowIds(tbody);
+  if (ids.join() !== before) listCall(`/api/settings/${kind}/order`, send("POST", { ids }), "顺序已保存");
+}
+$("view-settings").addEventListener("pointerup", endDrag);
+$("view-settings").addEventListener("pointercancel", endDrag);
+
+$("view-settings").addEventListener("keydown", e => {
+  if (e.key !== "Enter" || e.isComposing) return;
+  const kind = e.target.id?.match(/^set-(\w+)-new$/)?.[1];
+  if (kind) document.querySelector(`[data-add="${kind}"]`).click();
+  else if (e.target.dataset.act === "name") e.target.blur();
+});
 
 // ---------- security ----------
 

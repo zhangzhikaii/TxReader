@@ -64,16 +64,27 @@ CREATE TABLE IF NOT EXISTS transactions (
 );
 CREATE INDEX IF NOT EXISTS transactions_date ON transactions(date);
 
--- Accounts and currencies known so far; an account may be used with several currencies
+-- The account / currency / category lists (managed on the settings page). `sort` is the order
+-- they are shown in. An account may be used with several currencies (account_currencies).
 CREATE TABLE IF NOT EXISTS accounts (
     id         INTEGER PRIMARY KEY,
     name       TEXT NOT NULL UNIQUE,
+    sort       INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS currencies (
     id         INTEGER PRIMARY KEY,
     name       TEXT NOT NULL UNIQUE,
+    sort       INTEGER NOT NULL DEFAULT 0,
+    is_base    INTEGER NOT NULL DEFAULT 0,  -- the one everything is converted into (at most one)
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    sort       INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 
@@ -153,26 +164,59 @@ def _migrate(conn) -> None:
             " CREATE INDEX IF NOT EXISTS transactions_date ON transactions(date); COMMIT;")
         conn.execute("PRAGMA foreign_keys = ON")
 
-    # The account / currency lists started out empty: fill them once from the transactions so far
+    # The lists gained an order and a base currency. An `archived` column existed briefly
+    # during development and was dropped again.
+    for table in ("accounts", "currencies", "categories"):
+        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if "sort" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN sort INTEGER NOT NULL DEFAULT 0")
+            conn.execute(f"UPDATE {table} SET sort = id")
+        if table == "currencies" and "is_base" not in cols:
+            conn.execute("ALTER TABLE currencies ADD COLUMN is_base INTEGER NOT NULL DEFAULT 0")
+        if "archived" in cols:
+            conn.execute(f"ALTER TABLE {table} DROP COLUMN archived")
+
+    # The lists started out empty: fill them once from the transactions so far
     if not conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():
         register_accounts(conn, conn.execute(
             "SELECT DISTINCT account, currency FROM transactions ORDER BY id").fetchall())
+    if not conn.execute("SELECT 1 FROM categories LIMIT 1").fetchone():
+        register_accounts(conn, [], [r[0] for r in conn.execute(
+            "SELECT category FROM transactions GROUP BY category ORDER BY MIN(id)")])
+    default_base(conn)
 
 
-def register_accounts(conn, pairs) -> None:
-    """Add (account, currency) pairs that aren't known yet; blank names are ignored."""
+def _add_name(conn, table: str, name: str, t: str) -> None:
+    """Add a name to a list (at the end) unless it is already there."""
+    conn.execute(f"INSERT OR IGNORE INTO {table} (name, sort, created_at)"
+                 f" VALUES (?, (SELECT COALESCE(MAX(sort), 0) + 1 FROM {table}), ?)", (name, t))
+
+
+def register_accounts(conn, pairs, categories=()) -> None:
+    """Add (account, currency) pairs and categories that aren't on the lists yet; blank names
+    are ignored."""
     t = now()
+    for name in categories:
+        if (name or "").strip():
+            _add_name(conn, "categories", name.strip(), t)
     for account, currency in pairs:
         account, currency = (account or "").strip(), (currency or "").strip()
         if account:
-            conn.execute("INSERT OR IGNORE INTO accounts (name, created_at) VALUES (?, ?)", (account, t))
+            _add_name(conn, "accounts", account, t)
         if currency:
-            conn.execute("INSERT OR IGNORE INTO currencies (name, created_at) VALUES (?, ?)", (currency, t))
+            _add_name(conn, "currencies", currency, t)
         if account and currency:
             conn.execute(
                 "INSERT OR IGNORE INTO account_currencies (account_id, currency_id)"
                 " SELECT a.id, c.id FROM accounts a, currencies c WHERE a.name = ? AND c.name = ?",
                 (account, currency))
+    default_base(conn)
+
+
+def default_base(conn) -> None:
+    """人民币 is the base currency unless another one was chosen."""
+    conn.execute("UPDATE currencies SET is_base = 1 WHERE name = '人民币'"
+                 " AND NOT EXISTS (SELECT 1 FROM currencies WHERE is_base = 1)")
 
 
 @contextmanager

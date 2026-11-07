@@ -5,6 +5,7 @@ import threading
 from dataclasses import asdict
 from datetime import datetime
 
+from . import lists
 from .db import connect, now, register_accounts, save_image, sha256
 from .matching import match_rows
 from .models import Tx
@@ -200,7 +201,8 @@ def confirm(rows: list[dict]) -> int:
                 (row["id"], date, _weekday(date), str(row.get("account", "")), str(row.get("currency", "")),
                  amount, str(row.get("category", "")), str(row.get("description", "")), t, t))
             conn.execute("UPDATE ocr_rows SET status = 'confirmed' WHERE id = ?", (row["id"],))
-        register_accounts(conn, [(r.get("account"), r.get("currency")) for r in rows])
+        register_accounts(conn, [(r.get("account"), r.get("currency")) for r in rows],
+                          [r.get("category") for r in rows])
     return len(rows)
 
 
@@ -260,57 +262,12 @@ def _clean_tx(row: dict, keys) -> dict:
     return out
 
 
-def account_lists(conn=None) -> dict:
-    """{"accounts": [{"name", "currencies": [...]}], "currencies": [...]}, most used first."""
-    if conn is None:
-        with connect() as conn:
-            return account_lists(conn)
-    used = lambda col: f"(SELECT COUNT(*) FROM transactions t WHERE t.{col} = x.name)"
-    currencies = [r[0] for r in conn.execute(
-        f"SELECT name FROM currencies x ORDER BY {used('currency')} DESC, id")]
-    accounts = [{"name": r["name"], "currencies": []} for r in conn.execute(
-        f"SELECT id, name FROM accounts x ORDER BY {used('account')} DESC, id")]
-    by_name = {a["name"]: a for a in accounts}
-    for r in conn.execute(
-            "SELECT a.name AS account, c.name AS currency FROM account_currencies ac"
-            " JOIN accounts a ON a.id = ac.account_id JOIN currencies c ON c.id = ac.currency_id"
-            " ORDER BY (SELECT COUNT(*) FROM transactions t WHERE t.account = a.name AND t.currency = c.name) DESC,"
-            " c.id"):
-        by_name[r["account"]]["currencies"].append(r["currency"])
-    return {"accounts": accounts, "currencies": currencies}
-
-
-def unknown_accounts(rows: list[dict], lists: dict) -> dict:
-    """What the rows would add to the lists: new accounts, new currencies, and known accounts
-    used with a currency they haven't had before."""
-    known = {a["name"]: set(a["currencies"]) for a in lists["accounts"]}
-    out = {"accounts": [], "currencies": [], "pairs": []}
-    for r in rows:
-        a, c = r["account"], r["currency"]
-        if a not in known and a not in out["accounts"]:
-            out["accounts"].append(a)
-        if c not in lists["currencies"] and c not in out["currencies"]:
-            out["currencies"].append(c)
-        if a in known and c not in known[a] and [a, c] not in out["pairs"]:
-            out["pairs"].append([a, c])
-    return out
-
-
-class UnknownAccounts(ValueError):
-    def __init__(self, unknown: dict):
-        self.unknown = unknown
-        parts = [f"新账户 {'、'.join(unknown['accounts'])}" if unknown["accounts"] else "",
-                 f"新币种 {'、'.join(unknown['currencies'])}" if unknown["currencies"] else "",
-                 "、".join(f"{a} 的新币种 {c}" for a, c in unknown["pairs"])]
-        super().__init__("有还没登记的：" + "；".join(p for p in parts if p) + "。确认要新增后再提交")
-
-
 def add_manual(rows: list[dict], add_accounts: bool = False) -> list[int]:
     """Store transactions typed in by hand. Each row: date, account, currency, amount,
     category, description. All or nothing.
 
-    Accounts, currencies and account-currency pairs not on the lists yet are added only with
-    add_accounts (the user has been asked); otherwise UnknownAccounts is raised."""
+    Accounts, currencies, account-currency pairs and categories not on the lists yet are added
+    only with add_accounts (the user has been asked); otherwise lists.UnknownNames is raised."""
     cleaned = []
     for row in rows:
         tx = _clean_tx(row, TX_FIELDS)
@@ -319,11 +276,12 @@ def add_manual(rows: list[dict], add_accounts: bool = False) -> list[int]:
         cleaned.append(tx)
     ids = []
     with connect() as conn:
-        unknown = unknown_accounts(cleaned, account_lists(conn))
+        unknown = lists.unknown(cleaned, lists.offered(conn))
         if any(unknown.values()):
             if not add_accounts:
-                raise UnknownAccounts(unknown)
-            register_accounts(conn, [(tx["account"], tx["currency"]) for tx in cleaned])
+                raise lists.UnknownNames(unknown)
+            register_accounts(conn, [(tx["account"], tx["currency"]) for tx in cleaned],
+                              [tx["category"] for tx in cleaned])
         for tx in cleaned:
             t = now()
             ids.append(conn.execute(
@@ -349,12 +307,9 @@ def update_transaction(tx_id: int, changes: dict) -> None:
 
 
 def suggestions() -> dict:
-    """What to offer while typing: the account and currency lists, and the categories used so
-    far (most used first)."""
+    """The lists manual entry offers, in list order (see lists.offered)."""
     with connect() as conn:
-        categories = [r[0] for r in conn.execute(
-            "SELECT category FROM transactions WHERE category != '' GROUP BY category ORDER BY COUNT(*) DESC")]
-        return {**account_lists(conn), "categories": categories}
+        return lists.offered(conn)
 
 
 def image_file(image_id: int) -> tuple[str, str]:

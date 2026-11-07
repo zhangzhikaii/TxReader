@@ -9,7 +9,8 @@
 ```
 app.py                    FastAPI：页面、登录检查（中间件）、全部 /api 接口
 txreader/db.py            SQLite 表结构、旧库升级（`_migrate`）、账户 / 币种登记（`register_accounts`）、连接、截图存成 WebP（数据目录 TXREADER_DATA，默认 data/）
-txreader/store.py         识别入库流程、待核对行、确认入库、交易、导出 CSV
+txreader/store.py         识别入库流程、待核对行、确认入库、手动输入、交易、导出 CSV
+txreader/lists.py         账户 / 币种 / 种类清单：输入时的提示（`offered`）、找出新名称（`unknown`）、设置页的增删改排序
 txreader/matching.py      新识别的行与库里已有行比对（跳过 / 合并 / 疑似重复 / 新增）
 txreader/auth.py          单用户密码登录、会话（闲置超时 + 30 天上限）、登录记录、错误次数锁定；`python -m txreader.auth` 生成密码哈希（填到 `.env`）
 txreader/ocr.py           RapidOCR 封装：图片 -> Box(text, x0, y0, x1, y1, score, angle)
@@ -22,14 +23,14 @@ txreader/parsers/         每个来源一个解析器，parse_boxes(boxes, img) 
   receipt.py              纸质小票照片（各家版式不同）；按文本框倾斜角配对「合計」与金额
 txreader/models.py        Tx（解析结果）与 resolve_date（补全缺失的年 / 月，并标记为推测）
 txreader/records.py       build_records：合并多张截图、跨截图去重、按时间排序，生成行
-static/index.html         整个前端（记一笔 / 交易 / 导出 / 登录记录四个页面，按 #hash 切换；记一笔里再分截图识别 / 手动输入 / 邮件导入），单文件原生 JS，无构建步骤
+static/index.html         整个前端（记一笔 / 交易 / 导出 / 设置 / 登录记录五个页面，按 #hash 切换；记一笔里再分截图识别 / 手动输入 / 邮件导入），单文件原生 JS，无构建步骤
 static/login.html         登录页
 tests/test_logic.py       去重、日期推断、比对规则等纯逻辑测试
 tests/test_api.py         接口全流程测试（假识别结果 + 临时数据目录）
 tests/test_samples.py     用 samples/ 里的真实截图对照期望结果（没有 samples/ 时自动跳过）
 ```
 
-数据流：截图（按哈希存成 WebP，传过的直接用上次结果）→ OCR Box → 来源解析器 → `Tx` → `build_records` → `match_rows` 与库里比对 → 新行存为 `ocr_rows`（pending）→ 前端核对、修改（存为 draft）→ 确认后写入 `transactions`（`origin = screenshot`）→ 导出 CSV 并记录到 `exports`。手动输入直接写入 `transactions`（`origin = manual`，没有 `ocr_row_id`）。账户 / 币种清单在 `accounts`、`currencies`、`account_currencies`（一个账户可有多个币种）：截图入库时自动登记，手动输入遇到新的要用户在确认框里同意（接口参数 `add_accounts`，否则 409）。
+数据流：截图（按哈希存成 WebP，传过的直接用上次结果）→ OCR Box → 来源解析器 → `Tx` → `build_records` → `match_rows` 与库里比对 → 新行存为 `ocr_rows`（pending）→ 前端核对、修改（存为 draft）→ 确认后写入 `transactions`（`origin = screenshot`）→ 导出 CSV 并记录到 `exports`。手动输入直接写入 `transactions`（`origin = manual`，没有 `ocr_row_id`）。账户 / 币种 / 种类清单在 `accounts`、`currencies`、`account_currencies`（一个账户可有多个币种）、`categories`，各有 `sort`，币种有 `is_base`：截图入库时自动登记，手动输入遇到新的要用户在确认框里同意（接口参数 `add_accounts`，否则 409）；交易里仍存名称文字，设置页改名时一起改。
 
 ## 约定
 

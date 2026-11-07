@@ -12,7 +12,7 @@ from pydantic import BaseModel
 # Settings come from .env (see .env.example); variables already set in the environment win
 load_dotenv(Path(__file__).parent / ".env")
 
-from txreader import auth, store  # noqa: E402
+from txreader import auth, lists, store  # noqa: E402
 from txreader.db import image_path  # noqa: E402
 from txreader.parsers import PARSERS  # noqa: E402
 
@@ -189,7 +189,7 @@ def add_transactions(body: ManualBody):
     """Transactions typed in by hand, stored right away."""
     try:
         ids = store.add_manual([r.model_dump() for r in body.rows], body.add_accounts)
-    except store.UnknownAccounts as e:
+    except lists.UnknownNames as e:
         raise HTTPException(409, {"message": str(e), "unknown": e.unknown})
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -208,6 +208,80 @@ def edit_transaction(tx_id: int, body: TransactionEdit):
 @app.get("/api/suggestions")
 def suggestions():
     return store.suggestions()
+
+
+# ---------- settings: account / currency / category lists ----------
+
+@app.exception_handler(lists.NotFound)
+def list_item_not_found(request: Request, exc: lists.NotFound):
+    return JSONResponse({"detail": "找不到这一项，可能已被删除，请刷新页面"}, status_code=404)
+
+
+@app.get("/api/settings")
+def settings():
+    return lists.settings()
+
+
+class NameBody(BaseModel):
+    name: str
+
+
+@app.post("/api/settings/{kind}")
+def add_list_item(kind: str, body: NameBody):
+    try:
+        return {"id": lists.add(kind, body.name)}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class ListItemEdit(BaseModel):
+    name: str | None = None
+    is_base: bool | None = None
+
+
+@app.patch("/api/settings/{kind}/{item_id}")
+def edit_list_item(kind: str, item_id: int, body: ListItemEdit):
+    try:
+        lists.update(kind, item_id, body.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.delete("/api/settings/{kind}/{item_id}")
+def delete_list_item(kind: str, item_id: int):
+    try:
+        lists.delete(kind, item_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.post("/api/settings/{kind}/order")
+def reorder_list(kind: str, body: IdsBody):
+    try:
+        lists.reorder(kind, body.ids)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.post("/api/settings/accounts/{account_id}/currencies")
+def add_account_currency(account_id: int, body: NameBody):
+    try:
+        lists.add_account_currency(account_id, body.name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.delete("/api/settings/accounts/{account_id}/currencies/{currency}")
+def remove_account_currency(account_id: int, currency: str):
+    try:
+        lists.remove_account_currency(account_id, currency)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
 
 
 class ExportBody(BaseModel):

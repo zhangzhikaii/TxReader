@@ -183,7 +183,8 @@ def test_manual_entry(client):
     rows = [row, {**row, "amount": 1000, "category": "红包"}]
     r = client.post("/api/transactions", json={"rows": rows})
     assert r.status_code == 409
-    assert r.json()["detail"]["unknown"] == {"accounts": ["现金"], "currencies": ["日元"], "pairs": []}
+    assert r.json()["detail"]["unknown"] == {"accounts": ["现金"], "currencies": ["日元"], "pairs": [],
+                                             "categories": ["饮食费", "红包"]}
     ids = client.post("/api/transactions", json={"rows": rows, "add_accounts": True}).json()["ids"]
     txs = client.get("/api/transactions?source=manual").json()["transactions"]
     assert [(t["origin"], t["date"], t["weekday"], t["amount"], t["image_id"]) for t in txs] == [
@@ -200,21 +201,24 @@ def test_manual_entry(client):
     rmb = {**row, "currency": "人民币"}
     r = client.post("/api/transactions", json={"rows": [rmb]})
     assert r.status_code == 409
-    assert r.json()["detail"]["unknown"] == {"accounts": [], "currencies": ["人民币"], "pairs": [["现金", "人民币"]]}
+    assert r.json()["detail"]["unknown"] == {"accounts": [], "currencies": ["人民币"], "pairs": [["现金", "人民币"]],
+                                             "categories": []}
     client.post("/api/transactions", json={"rows": [rmb], "add_accounts": True})
     assert client.post("/api/transactions", json={"rows": [rmb]}).is_success  # known now
 
     sug = client.get("/api/suggestions").json()
-    assert sug["accounts"] == [{"name": "现金", "currencies": ["日元", "人民币"]}]  # 2 uses each; older first
-    assert sug["currencies"] == ["日元", "人民币"]
-    assert set(sug["categories"]) == {"饮食费", "红包"}
+    assert sug["accounts"] == [{"name": "现金", "currencies": ["日元", "人民币"]}]  # 2 uses each
+    assert sug["currencies"] == ["日元", "人民币"]  # list order: first added first
+    assert sug["categories"] == ["饮食费", "红包"]
 
 
 def test_account_lists_filled_from_screenshots(client):
     p = upload(client, b"shot3")["pending"][0]
     client.post("/api/confirm", json={"rows": [{"id": p["id"], "date": p["date"], "amount": p["amount"],
                                                 "account": "微信", "currency": "人民币"}]})
-    assert client.get("/api/suggestions").json()["accounts"] == [{"name": "微信", "currencies": ["人民币"]}]
+    sug = client.get("/api/suggestions").json()
+    assert sug["accounts"] == [{"name": "微信", "currencies": ["人民币"]}]
+    assert sug["categories"] == []  # blank names aren't listed
 
 
 def test_old_transactions_table_is_upgraded(tmp_path, monkeypatch):
@@ -243,3 +247,65 @@ def test_old_transactions_table_is_upgraded(tmp_path, monkeypatch):
                             " JOIN currencies c ON c.id = ac.currency_id").fetchone()) == ("微信", "人民币")
         conn.execute("INSERT INTO transactions (origin, date, weekday, account, currency, amount, category,"
                      " description, confirmed_at, updated_at) VALUES ('manual', 'd', 'w', '', '', 1, '', '', 't', 't')")
+
+
+def test_settings_lists(client):
+    row = {"date": "2026/10/05 08:30:00", "account": "现金", "currency": "日元", "amount": -500,
+           "category": "饮食费", "description": ""}
+    client.post("/api/transactions", json={"rows": [row], "add_accounts": True})
+    get = lambda: client.get("/api/settings").json()
+    st = get()
+    cash, = st["accounts"]
+    assert (cash["name"], cash["used"], cash["currencies"]) == ("现金", 1, [{"name": "日元", "used": 1}])
+
+    # Adding, and no duplicates
+    assert client.post("/api/settings/currencies", json={"name": "人民币"}).is_success
+    assert client.post("/api/settings/currencies", json={"name": "人民币"}).status_code == 400
+    assert client.post("/api/settings/categories", json={"name": " "}).status_code == 400
+    rmb = next(c for c in get()["currencies"] if c["name"] == "人民币")
+    assert rmb["is_base"]  # 人民币 is the default base currency
+
+    # An account's currencies: add one; a used one can't be removed
+    assert client.post(f"/api/settings/accounts/{cash['id']}/currencies", json={"name": "人民币"}).is_success
+    assert client.post(f"/api/settings/accounts/{cash['id']}/currencies", json={"name": "美元"}).status_code == 400
+    assert client.delete(f"/api/settings/accounts/{cash['id']}/currencies/日元").status_code == 400
+    assert client.delete(f"/api/settings/accounts/{cash['id']}/currencies/人民币").is_success
+
+    # Renaming renames the transactions; can't take a name already used
+    food = get()["categories"][0]
+    assert client.patch(f"/api/settings/categories/{food['id']}", json={"name": "餐饮"}).is_success
+    assert client.get("/api/transactions").json()["transactions"][0]["category"] == "餐饮"
+    other = client.post("/api/settings/categories", json={"name": "交通费"}).json()["id"]
+    assert client.patch(f"/api/settings/categories/{other}", json={"name": "餐饮"}).status_code == 400
+
+    # Order, base currency
+    assert client.post("/api/settings/categories/order", json={"ids": [other]}).is_success
+    assert [c["name"] for c in get()["categories"]] == ["交通费", "餐饮"]
+    yen = next(c for c in get()["currencies"] if c["name"] == "日元")
+    assert client.patch(f"/api/settings/currencies/{yen['id']}", json={"is_base": True}).is_success
+    assert [c["name"] for c in get()["currencies"] if c["is_base"]] == ["日元"]
+
+    # Only unused items can be deleted
+    assert client.delete(f"/api/settings/categories/{food['id']}").status_code == 400
+    assert client.delete(f"/api/settings/categories/{other}").is_success
+    assert client.delete(f"/api/settings/currencies/{yen['id']}").status_code == 400  # used (and base)
+    assert client.delete(f"/api/settings/currencies/{rmb['id']}").is_success
+    assert client.delete("/api/settings/categories/999").status_code == 404
+    assert client.get("/api/settings/nope").status_code in (404, 405)
+
+
+def test_dropped_archived_column(tmp_path, monkeypatch):
+    import sqlite3
+    from txreader import db
+    old = sqlite3.connect(tmp_path / "txreader.db")
+    old.executescript("""
+        CREATE TABLE accounts (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, sort INTEGER NOT NULL DEFAULT 0,
+            archived INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+        INSERT INTO accounts (name, sort, archived, created_at) VALUES ('现金', 1, 1, 't');
+    """)
+    old.commit()
+    old.close()
+    monkeypatch.setenv("TXREADER_DATA", str(tmp_path))
+    with db.connect() as conn:
+        assert "archived" not in {r["name"] for r in conn.execute("PRAGMA table_info(accounts)")}
+        assert conn.execute("SELECT name FROM accounts").fetchone()[0] == "现金"
