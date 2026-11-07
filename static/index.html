@@ -141,11 +141,22 @@
   table.sheet tbody.foot tr:first-child td { border-top:2px solid #6b7280; }
   table.sheet tbody.foot td:first-child { color:var(--muted); }
   table.sheet tbody.foot tr.strong td { font-weight:600; }
-  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:16px; }
-  .tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
-  .tile .label { font-size:13px; color:var(--muted); }
-  .tile .value { font-size:24px; font-weight:600; margin-top:4px; font-variant-numeric:tabular-nums; }
-  .tile .sub { font-size:12px; color:var(--muted); margin-top:4px; }
+  /* Balance total: the big number, with the change from last month beside it */
+  .hero { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin-bottom:16px; }
+  .hero .label { font-size:13px; color:var(--muted); }
+  .hero .row { display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; margin-top:6px; }
+  .hero .total { font-size:34px; font-weight:650; letter-spacing:-.01em; font-variant-numeric:tabular-nums; line-height:1.15; }
+  .hero .total.neg { color:#b91c1c; }
+  .hero .total .unit { font-size:15px; font-weight:500; color:var(--muted); margin-left:6px; letter-spacing:0; }
+  .hero .missing { font-size:18px; color:#b45309; }
+  .delta { display:flex; flex-direction:column; gap:2px; }
+  .delta .chg { display:inline-flex; align-items:center; gap:6px; font-size:15px; font-weight:600; font-variant-numeric:tabular-nums;
+                padding:2px 10px; border-radius:999px; width:fit-content; }
+  .delta .chg.up { color:#15803d; background:#dcfce7; }
+  .delta .chg.down { color:#b91c1c; background:#fee2e2; }
+  .delta .chg.flat, .delta .chg.na { color:var(--muted); background:#f3f4f6; font-weight:500; }
+  .delta .pct { font-weight:500; opacity:.85; }
+  .delta .vs { font-size:12px; color:var(--muted); padding-left:2px; }
   .warn-box { background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:10px 12px; font-size:14px; margin-bottom:12px; }
   /* Confirmation before storing manual rows */
   dialog { border:0; border-radius:12px; padding:20px; width:min(860px, calc(100vw - 32px)); max-height:calc(100vh - 48px);
@@ -310,7 +321,7 @@
       <span id="bal-status" class="status"></span>
     </div>
     <div id="bal-warn"></div>
-    <div class="tiles" id="bal-tiles"></div>
+    <div id="bal-tiles"></div>
     <div class="card" id="bal-card" hidden>
       <h2 id="bal-title"></h2>
       <div class="table-wrap"><table class="sheet">
@@ -1233,14 +1244,25 @@ async function loadBalances(month) {
     `<tr class="strong"><td>折算成${esc(base)}</td>${cur.map(c => moneyCell(bal.converted[c])).join("")}</tr>` +
     `<tr><td>汇差盈亏</td>${cur.map(c => first ? `<td class="none">—</td>` : moneyCell(bal.fx_gain[c], "缺汇率")).join("")}</tr>`;
 
-  const tile = (label, v, sub = "", missing = "缺汇率") => `<div class="tile"><div class="label">${label}</div>` +
-    `<div class="value ${v < 0 ? "neg" : ""}" style="${v < 0 ? "color:#b91c1c" : ""}">${v == null ? `<span class="muted" style="font-size:16px">${missing}</span>` : fmtAmount(v)}</div>` +
-    `<div class="sub">${sub}</div></div>`;
-  $("bal-tiles").innerHTML =
-    tile(`${esc(base)}合计`, bal.total, "所有账户折算后相加") +
-    (first ? tile("汇差盈亏", null, "起始月没有上个月可比", "—") + tile("月度差额", null, "起始月没有上个月可比", "—")
-           : tile("汇差盈亏", bal.fx_gain_total, "各币种汇差盈亏之和") +
-             tile("月度差额", bal.change, bal.prev_total == null ? "上月合计算不出来" : `上月 ${fmtAmount(bal.prev_total)}；应等于本月收支（折算后）+ 汇差盈亏`));
+  // One card: the total in the base currency, and how much it moved since last month
+  let delta;
+  if (first) {
+    delta = `<span class="chg na">起始月，没有上月可比</span>`;
+  } else if (bal.change == null) {
+    delta = `<span class="chg na">较上月：${bal.prev_total == null ? "上月缺汇率" : "缺汇率"}</span>`;
+  } else {
+    const dir = bal.change > 0 ? "up" : bal.change < 0 ? "down" : "flat";
+    const pct = bal.prev_total ? ` <span class="pct">${bal.change > 0 ? "+" : ""}${(bal.change / Math.abs(bal.prev_total) * 100).toFixed(2)}%</span>` : "";
+    delta = `<span class="chg ${dir}">${{ up: "▲", down: "▼", flat: "＝" }[dir]} ${fmtAmount(Math.abs(bal.change))}${pct}</span>` +
+            `<span class="vs">较上月（上月 ${fmtAmount(bal.prev_total)}）</span>`;
+  }
+  $("bal-tiles").innerHTML = `<div class="hero">
+    <div class="label">${esc(base)}合计 · ${monthEnd(bal.month)}</div>
+    <div class="row">
+      ${bal.total == null ? `<span class="missing">缺汇率，算不出来</span>`
+                          : `<span class="total ${bal.total < 0 ? "neg" : ""}">${fmtAmount(bal.total)}<span class="unit">${esc(base)}</span></span>`}
+      <span class="delta">${delta}</span>
+    </div></div>`;
 }
 $("bal-month").addEventListener("change", e => loadBalances(e.target.value));
 $("bal-prev").onclick = () => { const i = bal.months.indexOf(bal.month); loadBalances(bal.months[i + 1]); };
