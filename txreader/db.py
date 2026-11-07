@@ -94,6 +94,28 @@ CREATE TABLE IF NOT EXISTS account_currencies (
     PRIMARY KEY (account_id, currency_id)
 );
 
+-- Single values: start_month (YYYY-MM), the month whose end the opening balances are for
+CREATE TABLE IF NOT EXISTS config (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- What each account held in each currency at the end of the start month
+CREATE TABLE IF NOT EXISTS opening_balances (
+    account_id  INTEGER NOT NULL REFERENCES accounts(id),
+    currency_id INTEGER NOT NULL REFERENCES currencies(id),
+    amount      REAL NOT NULL,
+    PRIMARY KEY (account_id, currency_id)
+);
+
+-- Monthly rates, typed in by hand: 1 unit of the currency = rate units of the base currency
+CREATE TABLE IF NOT EXISTS fx_rates (
+    month       TEXT NOT NULL,          -- 2026-10
+    currency_id INTEGER NOT NULL REFERENCES currencies(id),
+    rate        REAL NOT NULL CHECK (rate > 0),
+    PRIMARY KEY (month, currency_id)
+);
+
 CREATE TABLE IF NOT EXISTS exports (
     id       INTEGER PRIMARY KEY,
     at       TEXT NOT NULL,

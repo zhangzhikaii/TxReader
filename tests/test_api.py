@@ -278,18 +278,18 @@ def test_settings_lists(client):
     other = client.post("/api/settings/categories", json={"name": "交通费"}).json()["id"]
     assert client.patch(f"/api/settings/categories/{other}", json={"name": "餐饮"}).status_code == 400
 
-    # Order, base currency
+    # Order; the base currency stays 人民币 (it can't be changed)
     assert client.post("/api/settings/categories/order", json={"ids": [other]}).is_success
     assert [c["name"] for c in get()["categories"]] == ["交通费", "餐饮"]
     yen = next(c for c in get()["currencies"] if c["name"] == "日元")
-    assert client.patch(f"/api/settings/currencies/{yen['id']}", json={"is_base": True}).is_success
-    assert [c["name"] for c in get()["currencies"] if c["is_base"]] == ["日元"]
+    client.patch(f"/api/settings/currencies/{yen['id']}", json={"is_base": True})
+    assert [c["name"] for c in get()["currencies"] if c["is_base"]] == ["人民币"]
 
     # Only unused items can be deleted
     assert client.delete(f"/api/settings/categories/{food['id']}").status_code == 400
     assert client.delete(f"/api/settings/categories/{other}").is_success
-    assert client.delete(f"/api/settings/currencies/{yen['id']}").status_code == 400  # used (and base)
-    assert client.delete(f"/api/settings/currencies/{rmb['id']}").is_success
+    assert client.delete(f"/api/settings/currencies/{yen['id']}").status_code == 400  # used
+    assert client.delete(f"/api/settings/currencies/{rmb['id']}").status_code == 400  # the base currency
     assert client.delete("/api/settings/categories/999").status_code == 404
     assert client.get("/api/settings/nope").status_code in (404, 405)
 
@@ -309,3 +309,55 @@ def test_dropped_archived_column(tmp_path, monkeypatch):
     with db.connect() as conn:
         assert "archived" not in {r["name"] for r in conn.execute("PRAGMA table_info(accounts)")}
         assert conn.execute("SELECT name FROM accounts").fetchone()[0] == "现金"
+
+
+def test_opening_balances_and_rates(client):
+    row = {"date": "2026/10/05 08:30:00", "account": "现金", "currency": "日元", "amount": -500,
+           "category": "饮食费", "description": ""}
+    client.post("/api/transactions", json={"rows": [row, {**row, "currency": "人民币"}], "add_accounts": True})
+    st = client.get("/api/settings").json()
+    cash = st["accounts"][0]["id"]
+    bank = client.post("/api/settings/accounts", json={"name": "某银行"}).json()["id"]
+    client.post(f"/api/settings/accounts/{bank}/currencies", json={"name": "人民币"})
+
+    # Start month and opening balances (only for an account's own currencies)
+    assert client.put("/api/opening/start-month", json={"month": "2026-13"}).status_code == 400
+    assert client.put("/api/opening/start-month", json={"month": "2026-09"}).is_success
+    assert client.put(f"/api/opening/{cash}/日元", json={"amount": 12000}).is_success
+    assert client.put(f"/api/opening/{bank}/人民币", json={"amount": -50.5}).is_success  # e.g. a credit card
+    assert client.put(f"/api/opening/{bank}/日元", json={"amount": 1}).status_code == 400
+    assert client.put(f"/api/opening/{bank}/美元", json={"amount": 1}).status_code == 404
+    op = client.get("/api/opening").json()
+    assert op["start_month"] == "2026-09"
+    assert op["currencies"] == ["日元", "人民币"]
+    assert [(a["name"], a["balances"]) for a in op["accounts"]] == [
+        ("现金", {"日元": 12000, "人民币": None}), ("某银行", {"人民币": -50.5})]
+
+    # What has an opening balance can't be deleted or dropped from the account
+    assert client.delete(f"/api/settings/accounts/{bank}").status_code == 400
+    assert client.delete(f"/api/settings/accounts/{cash}/currencies/日元").status_code == 400
+    assert client.put(f"/api/opening/{bank}/人民币", json={"amount": None}).is_success
+    assert client.delete(f"/api/settings/accounts/{bank}").is_success
+
+    # Monthly rates: from the start month to this month; the base currency isn't listed
+    r = client.get("/api/rates").json()
+    assert r["base"] == "人民币" and r["currencies"] == ["日元"]
+    assert r["months"][-2:] == ["2026-10", "2026-09"]
+    assert client.put("/api/rates/2026-10/日元", json={"rate": 0.0465}).is_success
+    assert client.put("/api/rates/2026-10/日元", json={"rate": 0}).status_code == 400
+    assert client.put("/api/rates/2026-10/人民币", json={"rate": 1}).status_code == 400
+    assert client.put("/api/rates/2026-1/日元", json={"rate": 1}).status_code == 400
+    assert client.get("/api/rates").json()["rates"] == {"2026-10": {"日元": 0.0465}}
+
+    # A currency with rates can't be deleted either
+    usd = client.post("/api/settings/currencies", json={"name": "美元"}).json()["id"]
+    client.put("/api/rates/2026-10/美元", json={"rate": 7.1})
+    assert client.delete(f"/api/settings/currencies/{usd}").status_code == 400
+    client.put("/api/rates/2026-10/美元", json={"rate": None})
+    assert client.delete(f"/api/settings/currencies/{usd}").is_success
+
+
+def test_rate_months():
+    from txreader import books
+    assert books.months_between("2025-11", "2026-02") == ["2025-11", "2025-12", "2026-01", "2026-02"]
+    assert books._shift("2026-01", -1) == "2025-12"

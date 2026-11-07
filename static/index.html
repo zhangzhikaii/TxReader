@@ -121,6 +121,13 @@
   .add-row { display:flex; gap:8px; margin-top:12px; }
   .add-row input { max-width:240px; }
   .settings-help { font-size:13px; color:var(--muted); margin:-4px 0 12px; }
+  /* Opening balances and rates: a grid of number inputs */
+  table.grid td.num input { width:130px; text-align:right; font-variant-numeric:tabular-nums; }
+  table.grid td.none { color:var(--line); text-align:right; }
+  table.grid tr.total td { border-top:2px solid var(--line); font-weight:600; }
+  table.grid td input.missing { background:#fffbeb; border-color:#fcd34d; }
+  .inline-field { display:flex; flex-direction:row; align-items:center; gap:8px; margin-bottom:12px; color:var(--text); font-size:14px; }
+  .inline-field input { width:auto; }
   /* Confirmation before storing manual rows */
   dialog { border:0; border-radius:12px; padding:20px; width:min(860px, calc(100vw - 32px)); max-height:calc(100vh - 48px);
            box-shadow:0 20px 50px rgba(0,0,0,.25); color:var(--text); }
@@ -140,6 +147,7 @@
       <a href="#add" data-view="add">记一笔</a>
       <a href="#transactions" data-view="transactions">交易</a>
       <a href="#export" data-view="export">导出</a>
+      <a href="#rates" data-view="rates">汇率</a>
       <a href="#settings" data-view="settings">设置</a>
       <a href="#security" data-view="security">登录记录</a>
     </nav>
@@ -318,7 +326,7 @@
     </div>
     <div class="card">
       <h2>币种</h2>
-      <p class="settings-help">本位币是统计时折算成的币种（默认人民币）。账户结余、月度收支的列按这里的顺序</p>
+      <p class="settings-help">本位币固定为人民币，统计时都折算成它。账户结余、月度收支的列按这里的顺序</p>
       <div class="table-wrap"><table>
         <thead><tr><th></th><th>名称</th><th>本位币</th><th class="num">交易</th><th></th></tr></thead>
         <tbody id="set-currencies"></tbody>
@@ -335,6 +343,30 @@
       <div class="add-row"><input id="set-categories-new" placeholder="新种类名称"><button class="secondary" data-add="categories">添加种类</button></div>
     </div>
     <div class="legend">按住左边的 ☰ 上下拖动调整顺序。改名会把已有交易里的名称一起改掉；有交易在用的不能删除。<span id="set-status" class="status"></span></div>
+    <div class="card" id="opening-card">
+      <h2>期初余额</h2>
+      <p class="settings-help">填起始月月底时每个账户、每个币种的实际余额。之后每个月的结余 = 上月底结余 + 本月的交易，起始月和之前的交易不再计入。账户没有的币种，先在上面的账户清单里加上</p>
+      <label class="inline-field">起始月<input id="op-month" type="month"></label>
+      <div class="table-wrap"><table class="grid">
+        <thead id="op-head"></thead>
+        <tbody id="op-rows"></tbody>
+      </table></div>
+      <div class="bar"><span id="op-status" class="status"></span></div>
+    </div>
+  </section>
+
+  <!-- ===== 汇率 ===== -->
+  <section id="view-rates" hidden>
+    <div class="card">
+      <h2>月汇率</h2>
+      <p class="settings-help" id="fx-help"></p>
+      <div class="table-wrap"><table class="grid">
+        <thead id="fx-head"></thead>
+        <tbody id="fx-rows"></tbody>
+      </table></div>
+      <div class="bar"><span id="fx-status" class="status"></span></div>
+      <div class="legend">黄色是还没填的。改完离开输入框就会保存；清空即删除这个月的汇率。汇差盈亏 = 上月底存量 ×（本月汇率 − 上月汇率）</div>
+    </div>
   </section>
 
   <!-- ===== 登录记录 ===== -->
@@ -428,7 +460,7 @@ function flash(el, msg) { $(el).textContent = msg; }
 
 // ---------- views ----------
 
-const VIEWS = ["add", "transactions", "export", "settings", "security"];
+const VIEWS = ["add", "transactions", "export", "rates", "settings", "security"];
 function route() {
   let view = location.hash.slice(1);
   if (view === "recognize") { view = "add"; showMethod("screenshot"); } // old bookmark
@@ -440,6 +472,7 @@ function route() {
   if (view === "transactions") loadTransactions();
   if (view === "export") { loadExportRows(); loadExportHistory(); }
   if (view === "settings") loadSettings();
+  if (view === "rates") loadRates();
   if (view === "security") loadSecurity();
 }
 window.addEventListener("hashchange", route);
@@ -1135,6 +1168,7 @@ let lists = { accounts: [], currencies: [], categories: [] };
 async function loadSettings() {
   try { lists = await api("/api/settings"); } catch (e) { return flash("set-status", "读取失败：" + e.message); }
   for (const kind of Object.keys(LIST_LABELS)) renderList(kind);
+  loadOpening();
 }
 function renderList(kind) {
   const items = lists[kind];
@@ -1148,7 +1182,7 @@ function renderList(kind) {
         (addable.length ? `<select class="add-cur" data-act="add-cur"><option value="">＋ 币种</option>${addable.map(c => `<option>${esc(c.name)}</option>`).join("")}</select>` : "") + `</td>`;
     }
     if (kind === "currencies") {
-      extra = `<td><input type="radio" name="base-cur" data-act="base" ${it.is_base ? "checked" : ""} title="设为本位币"></td>`;
+      extra = `<td>${it.is_base ? '<span class="tag done">本位币</span>' : ""}</td>`;
     }
     return `<tr data-kind="${kind}" data-id="${it.id}">
       <td>${items.length > 1 ? `<span class="handle" title="按住拖动调整顺序" aria-label="拖动调整顺序">☰</span>` : ""}</td>
@@ -1201,8 +1235,6 @@ $("view-settings").addEventListener("change", e => {
       return;
     }
     patch({ name }, `已改名为「${name}」`);
-  } else if (act === "base") {
-    patch({ is_base: true }, `本位币改为「${it.name}」`);
   } else if (act === "add-cur" && e.target.value) {
     listCall(`/api/settings/accounts/${it.id}/currencies`, send("POST", { name: e.target.value }),
       `「${it.name}」已加上${e.target.value}`);
@@ -1246,6 +1278,106 @@ $("view-settings").addEventListener("keydown", e => {
   if (kind) document.querySelector(`[data-add="${kind}"]`).click();
   else if (e.target.dataset.act === "name") e.target.blur();
 });
+
+// ---------- settings: opening balances ----------
+
+let opening = { start_month: null, currencies: [], accounts: [] };
+async function loadOpening() {
+  try { opening = await api("/api/opening"); } catch (e) { return flash("op-status", "读取失败：" + e.message); }
+  $("op-month").value = opening.start_month ?? "";
+  // Only currencies some account uses get a column
+  const cols = opening.currencies.filter(c => opening.accounts.some(a => c in a.balances));
+  $("op-head").innerHTML = `<tr><th>账户</th>${cols.map(c => `<th class="num">${esc(c)}</th>`).join("")}</tr>`;
+  $("op-rows").innerHTML = opening.accounts.map(a => `<tr><td>${esc(a.name)}</td>${cols.map(c => {
+    if (!(c in a.balances)) return `<td class="none">—</td>`;
+    const v = a.balances[c];
+    return `<td class="num"><input data-op="${a.id}" data-cur="${esc(c)}" value="${v == null ? "" : fmtAmount(v)}" placeholder="0.00" inputmode="decimal"></td>`;
+  }).join("")}</tr>`).join("") +
+    (opening.accounts.length ? `<tr class="total"><td>合计</td>${cols.map(c => `<td class="num" data-op-total="${esc(c)}"></td>`).join("")}</tr>`
+                             : `<tr><td class="empty">还没有账户</td></tr>`);
+  for (const c of cols) openingTotal(c);
+}
+// Updated in place, so the cell being tabbed into keeps its focus
+function openingTotal(cur) {
+  const cell = $("op-rows").querySelector(`[data-op-total="${CSS.escape(cur)}"]`);
+  if (cell) cell.textContent = fmtAmount(opening.accounts.reduce((s, a) => s + (a.balances[cur] ?? 0), 0));
+}
+$("op-month").addEventListener("change", async e => {
+  try {
+    await api("/api/opening/start-month", send("PUT", { month: e.target.value || null }));
+    flash("op-status", e.target.value ? `起始月已设为 ${e.target.value}` : "已清除起始月");
+  } catch (err) { flash("op-status", "保存失败：" + err.message); }
+});
+$("op-rows").addEventListener("change", async e => {
+  const { op, cur } = e.target.dataset;
+  if (!op) return;
+  const text = e.target.value.trim();
+  const amount = text === "" ? null : parseAmount(text);
+  if (text !== "" && !/^[-+]?[\d,.\s¥]+$/.test(text)) {
+    e.target.classList.add("invalid");
+    return flash("op-status", `金额不对：「${text}」`);
+  }
+  try {
+    await api(`/api/opening/${op}/${encodeURIComponent(cur)}`, send("PUT", { amount }));
+    e.target.classList.remove("invalid");
+    e.target.value = amount == null ? "" : fmtAmount(amount);
+    opening.accounts.find(a => a.id === +op).balances[cur] = amount;
+    openingTotal(cur);
+    flash("op-status", "期初余额已保存");
+  } catch (err) { flash("op-status", "保存失败：" + err.message); }
+});
+// Enter: the same currency, the next account (Shift+Enter: previous)
+$("op-rows").addEventListener("keydown", e => {
+  if (e.key !== "Enter" || e.isComposing || !e.target.dataset.op) return;
+  e.preventDefault();
+  const inputs = [...$("op-rows").querySelectorAll(`input[data-cur="${CSS.escape(e.target.dataset.cur)}"]`)];
+  const next = inputs[inputs.indexOf(e.target) + (e.shiftKey ? -1 : 1)];
+  if (next) next.focus(); else e.target.blur();
+});
+$("op-rows").addEventListener("focusin", e => { if (e.target.dataset.op) e.target.select(); });
+
+// ---------- monthly rates ----------
+
+let fx = { base: null, currencies: [], months: [], rates: {} };
+const fmtMonth = m => `${m.slice(0, 4)}年${+m.slice(5)}月`;
+async function loadRates() {
+  try { fx = await api("/api/rates"); } catch (e) { return flash("fx-status", "读取失败：" + e.message); }
+  $("fx-help").textContent = fx.base
+    ? `每月填一次：1 单位外币 = 多少${fx.base}。${fx.base}是本位币，固定为 1，不用填。`
+    : "还没有本位币（人民币），先在「设置」的币种清单里添加「人民币」。";
+  $("fx-head").innerHTML = `<tr><th>月份</th>${fx.currencies.map(c => `<th class="num">1 ${esc(c)} =</th>`).join("")}</tr>`;
+  $("fx-rows").innerHTML = fx.currencies.length ? fx.months.map(m => `<tr><td>${fmtMonth(m)}</td>${fx.currencies.map(c => {
+    const v = fx.rates[m]?.[c];
+    return `<td class="num"><input data-fx="${m}" data-cur="${esc(c)}" value="${v ?? ""}" class="${v == null ? "missing" : ""}" inputmode="decimal"></td>`;
+  }).join("")}</tr>`).join("") : `<tr><td class="empty">除了本位币还没有别的币种</td></tr>`;
+}
+$("fx-rows").addEventListener("change", async e => {
+  const { fx: month, cur } = e.target.dataset;
+  if (!month) return;
+  const text = e.target.value.trim();
+  const rate = text === "" ? null : Number(text.replace(/[,\s]/g, ""));
+  if (rate !== null && !(rate > 0)) {
+    e.target.classList.add("invalid");
+    return flash("fx-status", `汇率要是大于 0 的数字：「${text}」`);
+  }
+  try {
+    await api(`/api/rates/${month}/${encodeURIComponent(cur)}`, send("PUT", { rate }));
+    e.target.classList.remove("invalid");
+    e.target.classList.toggle("missing", rate === null);
+    flash("fx-status", rate === null ? `已清空 ${fmtMonth(month)} 的${cur}汇率` : `${fmtMonth(month)}：1 ${cur} = ${rate} ${fx.base ?? ""}`);
+    (fx.rates[month] ??= {})[cur] = rate;
+  } catch (err) { flash("fx-status", "保存失败：" + err.message); }
+});
+// Enter: the same currency, the month below (older); Shift+Enter: above
+$("fx-rows").addEventListener("keydown", e => {
+  if (e.key !== "Enter" || e.isComposing || !e.target.dataset.fx) return;
+  e.preventDefault();
+  const tr = e.target.closest("tr");
+  const row = e.shiftKey ? tr.previousElementSibling : tr.nextElementSibling;
+  const next = row?.querySelector(`input[data-cur="${CSS.escape(e.target.dataset.cur)}"]`);
+  if (next) next.focus(); else e.target.blur();
+});
+$("fx-rows").addEventListener("focusin", e => { if (e.target.dataset.fx) e.target.select(); });
 
 // ---------- security ----------
 

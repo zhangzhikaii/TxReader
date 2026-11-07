@@ -12,7 +12,7 @@ from pydantic import BaseModel
 # Settings come from .env (see .env.example); variables already set in the environment win
 load_dotenv(Path(__file__).parent / ".env")
 
-from txreader import auth, lists, store  # noqa: E402
+from txreader import auth, books, lists, store  # noqa: E402
 from txreader.db import image_path  # noqa: E402
 from txreader.parsers import PARSERS  # noqa: E402
 
@@ -210,6 +210,62 @@ def suggestions():
     return store.suggestions()
 
 
+# ---------- opening balances & monthly rates ----------
+
+@app.exception_handler(books.NotFound)
+def books_not_found(request: Request, exc: books.NotFound):
+    return JSONResponse({"detail": f"没有币种「{exc}」，请刷新页面"}, status_code=404)
+
+
+@app.get("/api/opening")
+def opening():
+    return books.opening()
+
+
+class MonthBody(BaseModel):
+    month: str | None = None
+
+
+@app.put("/api/opening/start-month")
+def set_start_month(body: MonthBody):
+    try:
+        books.set_start_month(body.month)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+class AmountBody(BaseModel):
+    amount: float | None = None
+
+
+@app.put("/api/opening/{account_id}/{currency}")
+def set_opening(account_id: int, currency: str, body: AmountBody):
+    try:
+        books.set_opening(account_id, currency, body.amount)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.get("/api/rates")
+def rates():
+    return books.rates()
+
+
+class RateBody(BaseModel):
+    rate: float | None = None
+
+
+@app.put("/api/rates/{month}/{currency}")
+def set_rate(month: str, currency: str, body: RateBody):
+    try:
+        books.set_rate(month, currency, body.rate)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
 # ---------- settings: account / currency / category lists ----------
 
 @app.exception_handler(lists.NotFound)
@@ -236,7 +292,6 @@ def add_list_item(kind: str, body: NameBody):
 
 class ListItemEdit(BaseModel):
     name: str | None = None
-    is_base: bool | None = None
 
 
 @app.patch("/api/settings/{kind}/{item_id}")

@@ -124,7 +124,8 @@ def add(kind: str, name: str) -> int:
 
 
 def update(kind: str, item_id: int, changes: dict) -> None:
-    """changes: name (renames the transactions too), is_base (currencies only)."""
+    """changes: name (renames the transactions too). The base currency is fixed (人民币):
+    changing it would make every rate typed in so far wrong."""
     kind = _check_kind(kind)
     with connect() as conn:
         old = _get(conn, kind, item_id)
@@ -137,10 +138,6 @@ def update(kind: str, item_id: int, changes: dict) -> None:
                 conn.execute(f"UPDATE {kind} SET name = ? WHERE id = ?", (name, item_id))
                 conn.execute(f"UPDATE transactions SET {col} = ?, updated_at = ? WHERE {col} = ?",
                              (name, now(), old["name"]))
-        if changes.get("is_base"):
-            if kind != "currencies":
-                raise ValueError("只有币种可以设为本位币")
-            conn.execute("UPDATE currencies SET is_base = (id = ?)", (item_id,))
 
 
 def reorder(kind: str, ids: list[int]) -> None:
@@ -161,7 +158,14 @@ def delete(kind: str, item_id: int) -> None:
         if conn.execute(f"SELECT 1 FROM transactions WHERE {col} = ? LIMIT 1", (r["name"],)).fetchone():
             raise ValueError(f"「{r['name']}」已经有交易在用，不能删除")
         if kind == "currencies" and r["is_base"]:
-            raise ValueError("本位币不能删除，先把别的币种设为本位币")
+            raise ValueError("本位币不能删除")
+        # Opening balances and rates are data too: don't drop them along with a typo'd name
+        ref = {"accounts": "account_id", "currencies": "currency_id"}.get(kind)
+        if ref and conn.execute(f"SELECT 1 FROM opening_balances WHERE {ref} = ? LIMIT 1", (item_id,)).fetchone():
+            raise ValueError(f"「{r['name']}」填了期初余额，不能删除（先清空期初余额）")
+        if kind == "currencies" and conn.execute(
+                "SELECT 1 FROM fx_rates WHERE currency_id = ? LIMIT 1", (item_id,)).fetchone():
+            raise ValueError(f"「{r['name']}」填了月汇率，不能删除（先清空它的汇率）")
         if kind == "accounts":
             conn.execute("DELETE FROM account_currencies WHERE account_id = ?", (item_id,))
         if kind == "currencies":
@@ -186,5 +190,8 @@ def remove_account_currency(account_id: int, currency: str) -> None:
         if conn.execute("SELECT 1 FROM transactions WHERE account = ? AND currency = ? LIMIT 1",
                         (a["name"], currency)).fetchone():
             raise ValueError(f"「{a['name']}」已经有{currency}的交易，不能去掉这个币种")
+        if conn.execute("SELECT 1 FROM opening_balances WHERE account_id = ?"
+                        " AND currency_id = (SELECT id FROM currencies WHERE name = ?)", (account_id, currency)).fetchone():
+            raise ValueError(f"「{a['name']}」填了{currency}的期初余额，不能去掉这个币种（先清空期初余额）")
         conn.execute("DELETE FROM account_currencies WHERE account_id = ?"
                      " AND currency_id = (SELECT id FROM currencies WHERE name = ?)", (account_id, currency))
