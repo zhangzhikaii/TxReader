@@ -266,6 +266,15 @@ def set_rate(month: str, currency: str, body: RateBody):
     return {"ok": True}
 
 
+@app.get("/api/balances")
+def balance_sheet(month: str | None = None):
+    """Month-end balances of every account and currency, converted to the base currency."""
+    try:
+        return books.balances(month)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 # ---------- settings: account / currency / category lists ----------
 
 @app.exception_handler(lists.NotFound)

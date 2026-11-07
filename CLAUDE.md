@@ -11,7 +11,7 @@ app.py                    FastAPI：页面、登录检查（中间件）、全�
 txreader/db.py            SQLite 表结构、旧库升级（`_migrate`）、账户 / 币种登记（`register_accounts`）、连接、截图存成 WebP（数据目录 TXREADER_DATA，默认 data/）
 txreader/store.py         识别入库流程、待核对行、确认入库、手动输入、交易、导出 CSV
 txreader/lists.py         账户 / 币种 / 种类清单：输入时的提示（`offered`）、找出新名称（`unknown`）、设置页的增删改排序
-txreader/books.py         期初余额（起始月 + 账户 × 币种）、月汇率（1 外币 = 多少本位币，手填）；之后的结余和月度收支计算也放这里
+txreader/books.py         期初余额（起始月 + 账户 × 币种）、月汇率（1 外币 = 多少本位币，手填）、账户结余（`balances`：月底结余、折算、汇差、月度差额）；之后的月度收支也放这里
 txreader/matching.py      新识别的行与库里已有行比对（跳过 / 合并 / 疑似重复 / 新增）
 txreader/auth.py          单用户密码登录、会话（闲置超时 + 30 天上限）、登录记录、错误次数锁定；`python -m txreader.auth` 生成密码哈希（填到 `.env`）
 txreader/ocr.py           RapidOCR 封装：图片 -> Box(text, x0, y0, x1, y1, score, angle)
@@ -24,7 +24,7 @@ txreader/parsers/         每个来源一个解析器，parse_boxes(boxes, img) 
   receipt.py              纸质小票照片（各家版式不同）；按文本框倾斜角配对「合計」与金额
 txreader/models.py        Tx（解析结果）与 resolve_date（补全缺失的年 / 月，并标记为推测）
 txreader/records.py       build_records：合并多张截图、跨截图去重、按时间排序，生成行
-static/index.html         整个前端（记一笔 / 交易 / 导出 / 汇率 / 设置 / 登录记录六个页面，按 #hash 切换；记一笔里再分截图识别 / 手动输入 / 邮件导入），单文件原生 JS，无构建步骤
+static/index.html         整个前端（记一笔 / 交易 / 结余 / 导出 / 汇率 / 设置 / 登录记录七个页面，按 #hash 切换；记一笔里再分截图识别 / 手动输入 / 邮件导入），单文件原生 JS，无构建步骤
 static/login.html         登录页
 tests/test_logic.py       去重、日期推断、比对规则等纯逻辑测试
 tests/test_api.py         接口全流程测试（假识别结果 + 临时数据目录）

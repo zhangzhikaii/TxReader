@@ -361,3 +361,47 @@ def test_rate_months():
     from txreader import books
     assert books.months_between("2025-11", "2026-02") == ["2025-11", "2025-12", "2026-01", "2026-02"]
     assert books._shift("2026-01", -1) == "2025-12"
+
+
+def test_balance_sheet(client):
+    from datetime import date
+    from txreader import books
+    tx = lambda date_, account, currency, amount: {"date": date_, "account": account, "currency": currency,
+                                                   "amount": amount, "category": "饮食费", "description": ""}
+    assert client.get("/api/balances").json()["month"] is None  # no start month yet
+
+    client.post("/api/transactions", json={"add_accounts": True, "rows": [
+        tx("2026/09/20 10:00:00", "现金", "日元", -300),     # in the start month: already in the opening balance
+        tx("2026/10/05 10:00:00", "现金", "日元", -1000),
+        tx("2026/10/06 10:00:00", "某银行", "人民币", 0.5),
+    ]})
+    ids = {a["name"]: a["id"] for a in client.get("/api/settings").json()["accounts"]}
+    client.put("/api/opening/start-month", json={"month": "2026-09"})
+    client.put(f"/api/opening/{ids['现金']}/日元", json={"amount": 10000})
+    client.put(f"/api/opening/{ids['某银行']}/人民币", json={"amount": 400})
+    client.put("/api/rates/2026-09/日元", json={"rate": 0.04})
+    client.put("/api/rates/2026-10/日元", json={"rate": 0.05})
+
+    sep = books.balances("2026-09", today=date(2026, 10, 20))
+    assert sep["months"] == ["2026-10", "2026-09"]
+    assert [(a["name"], a["balances"]) for a in sep["accounts"]] == [
+        ("现金", {"日元": 10000}), ("某银行", {"人民币": 400})]
+    assert sep["currencies"] == ["日元", "人民币"]
+    assert (sep["converted"], sep["total"]) == ({"日元": 400, "人民币": 400}, 800)
+    assert sep["fx_gain_total"] is None and sep["change"] is None  # nothing before the start month
+
+    # Last month 10,000 yen at 0.04 (400); spent 1,000; now 9,000 at 0.05 (450)
+    octo = books.balances("2026-10", today=date(2026, 10, 20))
+    assert octo["totals"] == {"日元": 9000, "人民币": 400.5}
+    assert octo["rates"] == {"日元": 0.05, "人民币": 1}
+    assert (octo["converted"], octo["total"]) == ({"日元": 450, "人民币": 400.5}, 850.5)
+    assert octo["fx_gain"] == {"日元": 100, "人民币": 0}  # 10,000 x (0.05 - 0.04)
+    assert (octo["fx_gain_total"], octo["prev_total"], octo["change"]) == (100, 800, 50.5)
+    # change = this month's flows at this month's rate + FX gain: -1000 x 0.05 + 0.5 + 100
+    assert octo["change"] == round(-1000 * 0.05 + 0.5 + octo["fx_gain_total"], 2)
+
+    # A month without a rate: what can't be converted stays empty
+    nov = client.get("/api/balances?month=2026-11").json()
+    assert nov["converted"]["日元"] is None and nov["total"] is None and nov["change"] is None
+    assert nov["fx_gain"]["日元"] is None
+    assert client.get("/api/balances?month=2026-08").status_code == 400

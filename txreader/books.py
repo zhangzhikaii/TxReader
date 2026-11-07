@@ -132,3 +132,130 @@ def set_rate(month: str, currency: str, rate: float | None) -> None:
             raise ValueError("汇率要大于 0")
         conn.execute("INSERT INTO fx_rates (month, currency_id, rate) VALUES (?, ?, ?)"
                      " ON CONFLICT (month, currency_id) DO UPDATE SET rate = excluded.rate", (month, cid, rate))
+
+
+# ---------- balance sheet ----------
+
+def _rates_for(conn, month: str) -> dict[str, float]:
+    """Rates of one month by currency name, the base currency included as 1."""
+    out = {r[0]: r[1] for r in conn.execute(
+        "SELECT c.name, f.rate FROM fx_rates f JOIN currencies c ON c.id = f.currency_id WHERE f.month = ?", (month,))}
+    base = conn.execute("SELECT name FROM currencies WHERE is_base = 1").fetchone()
+    if base:
+        out[base[0]] = 1.0
+    return out
+
+
+def _holdings(conn, start: str, month: str) -> dict[tuple[str, str], float]:
+    """(account, currency) -> balance at the end of `month`: the opening balances plus the
+    transactions after the start month, up to and including `month`."""
+    out: dict[tuple[str, str], float] = {}
+    for r in conn.execute(
+            "SELECT a.name, c.name, ob.amount FROM opening_balances ob"
+            " JOIN accounts a ON a.id = ob.account_id JOIN currencies c ON c.id = ob.currency_id"):
+        out[(r[0], r[1])] = r[2]
+    if month > start:
+        # Transaction dates are 2026/10/29 ...; months here are 2026-10
+        lo, hi = start.replace("-", "/"), month.replace("-", "/")
+        for r in conn.execute(
+                "SELECT account, currency, SUM(amount) FROM transactions"
+                " WHERE substr(date, 1, 7) > ? AND substr(date, 1, 7) <= ? GROUP BY account, currency", (lo, hi)):
+            out[(r[0], r[1])] = out.get((r[0], r[1]), 0) + r[2]
+    return {k: round(v, 2) for k, v in out.items()}
+
+
+def _by_currency(holdings: dict[tuple[str, str], float]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for (_, c), v in holdings.items():
+        out[c] = round(out.get(c, 0) + v, 2)
+    return out
+
+
+def _convert(totals: dict[str, float], rates: dict[str, float]):
+    """Each currency's total in the base currency (None when its rate is missing), and their
+    sum (None if any non-zero total can't be converted)."""
+    conv = {c: (round(v * rates[c], 2) if c in rates else None) for c, v in totals.items()}
+    grand = None if any(v is None and totals[c] for c, v in conv.items()) else \
+        round(sum(v or 0 for v in conv.values()), 2)
+    return conv, grand
+
+
+def balance_months(conn, today: date | None = None) -> list[str]:
+    """Months the balance sheet can show, newest first: the start month to this month (or the
+    last transaction, if later)."""
+    start = start_month(conn)
+    if not start:
+        return []
+    today = today or date.today()
+    last = conn.execute("SELECT MAX(substr(date, 1, 7)) FROM transactions").fetchone()[0]
+    end = max(f"{today.year}-{today.month:02d}", (last or "").replace("/", "-"), start)
+    return months_between(start, end)[::-1]
+
+
+def balances(month: str | None = None, today: date | None = None) -> dict:
+    """The balance sheet for the end of one month (docs/plan.md, 账户结余):
+
+    {"month", "start_month", "months" (to choose from), "base",
+     "currencies": [columns, list order], "accounts": [{"name", "balances": {currency: amount}}],
+     "rates": {currency: rate or None}, "totals": {currency: amount},
+     "converted": {currency: in base or None}, "total": sum in base or None,
+     "fx_gain": {currency: gain or None}, "fx_gain_total", "prev_total", "change"}
+
+    fx_gain = last month's holding x (this month's rate - last month's rate); none for the
+    start month itself. change = total - last month's total, which equals this month's
+    converted income/expense plus fx_gain_total."""
+    with connect() as conn:
+        start = start_month(conn)
+        months = balance_months(conn, today)
+        if not start:
+            return {"month": None, "start_month": None, "months": []}
+        month = _check_month(month) if month else months[0]
+        if month < start:
+            raise ValueError(f"起始月是 {start}，更早的月份没有结余")
+
+        holdings = _holdings(conn, start, month)
+        rates = _rates_for(conn, month)
+        base = conn.execute("SELECT name FROM currencies WHERE is_base = 1").fetchone()
+
+        # Rows: accounts in list order, each with its currencies; columns: currencies in use
+        order = [r[0] for r in conn.execute("SELECT name FROM currencies ORDER BY sort, id")]
+        accounts = {r[0]: {"name": r[0], "balances": {}} for r in conn.execute(
+            "SELECT name FROM accounts ORDER BY sort, id")}
+        for r in conn.execute(
+                "SELECT a.name, c.name FROM account_currencies ac"
+                " JOIN accounts a ON a.id = ac.account_id JOIN currencies c ON c.id = ac.currency_id"):
+            accounts[r[0]]["balances"][r[1]] = 0.0
+        for (a, c), v in holdings.items():
+            accounts.setdefault(a, {"name": a, "balances": {}})["balances"][c] = v
+        used = {c for acc in accounts.values() for c in acc["balances"]}
+        currencies = [c for c in order if c in used] + sorted(used - set(order))
+
+        totals = {c: 0.0 for c in currencies} | _by_currency(holdings)
+        converted, total = _convert(totals, rates)
+
+        out = {"month": month, "start_month": start, "months": months, "base": base[0] if base else None,
+               "currencies": currencies, "accounts": list(accounts.values()),
+               "rates": {c: rates.get(c) for c in currencies}, "totals": totals,
+               "converted": converted, "total": total,
+               "fx_gain": {c: None for c in currencies}, "fx_gain_total": None, "prev_total": None, "change": None}
+
+        if month > start:
+            prev = _shift(month, -1)
+            prev_totals = {c: 0.0 for c in currencies} | _by_currency(_holdings(conn, start, prev))
+            prev_rates = _rates_for(conn, prev)
+            gains = {}
+            for c in currencies:
+                held = prev_totals.get(c, 0)
+                if not held:
+                    gains[c] = 0.0
+                elif c in rates and c in prev_rates:
+                    gains[c] = round(held * (rates[c] - prev_rates[c]), 2)
+                else:
+                    gains[c] = None
+            out["fx_gain"] = gains
+            if all(g is not None for g in gains.values()):
+                out["fx_gain_total"] = round(sum(gains.values()), 2)
+            out["prev_total"] = _convert(prev_totals, prev_rates)[1]
+            if total is not None and out["prev_total"] is not None:
+                out["change"] = round(total - out["prev_total"], 2)
+        return out

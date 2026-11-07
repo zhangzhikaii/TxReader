@@ -128,6 +128,25 @@
   table.grid td input.missing { background:#fffbeb; border-color:#fcd34d; }
   .inline-field { display:flex; flex-direction:row; align-items:center; gap:8px; margin-bottom:12px; color:var(--text); font-size:14px; }
   .inline-field input { width:auto; }
+  /* Balance sheet */
+  .month-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .month-bar select { min-width:140px; }
+  .month-bar button { padding:6px 12px; }
+  table.sheet td, table.sheet th { padding:6px 10px; }
+  table.sheet td.num, table.sheet th.num { min-width:110px; }
+  table.sheet td.none { color:var(--line); text-align:right; }
+  table.sheet td.neg { color:#b91c1c; }
+  table.sheet td.zero { color:var(--muted); }
+  table.sheet td.missing { color:#b45309; text-align:right; }
+  table.sheet tbody.foot tr:first-child td { border-top:2px solid #6b7280; }
+  table.sheet tbody.foot td:first-child { color:var(--muted); }
+  table.sheet tbody.foot tr.strong td { font-weight:600; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .tile .label { font-size:13px; color:var(--muted); }
+  .tile .value { font-size:24px; font-weight:600; margin-top:4px; font-variant-numeric:tabular-nums; }
+  .tile .sub { font-size:12px; color:var(--muted); margin-top:4px; }
+  .warn-box { background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:10px 12px; font-size:14px; margin-bottom:12px; }
   /* Confirmation before storing manual rows */
   dialog { border:0; border-radius:12px; padding:20px; width:min(860px, calc(100vw - 32px)); max-height:calc(100vh - 48px);
            box-shadow:0 20px 50px rgba(0,0,0,.25); color:var(--text); }
@@ -146,6 +165,7 @@
     <nav>
       <a href="#add" data-view="add">记一笔</a>
       <a href="#transactions" data-view="transactions">交易</a>
+      <a href="#balances" data-view="balances">结余</a>
       <a href="#export" data-view="export">导出</a>
       <a href="#rates" data-view="rates">汇率</a>
       <a href="#settings" data-view="settings">设置</a>
@@ -276,6 +296,27 @@
       <div class="bar"><span id="tx-status" class="status"></span></div>
       <div class="legend">截图识别的交易点一行可以查看原截图。入库后只能修改种类和描述，改完自动保存</div>
     </div>
+  </section>
+
+  <!-- ===== 结余 ===== -->
+  <section id="view-balances" hidden>
+    <div class="card month-bar">
+      <button class="secondary" id="bal-prev" title="上个月">‹</button>
+      <select id="bal-month" aria-label="月份"></select>
+      <button class="secondary" id="bal-next" title="下个月">›</button>
+      <span id="bal-status" class="status"></span>
+    </div>
+    <div id="bal-warn"></div>
+    <div class="card" id="bal-card" hidden>
+      <h2 id="bal-title"></h2>
+      <div class="table-wrap"><table class="sheet">
+        <thead id="bal-head"></thead>
+        <tbody id="bal-rows"></tbody>
+        <tbody id="bal-foot" class="foot"></tbody>
+      </table></div>
+      <div class="legend">结余 = 期初余额 + 起始月之后的交易。汇差盈亏 = 上月底存量 ×（本月汇率 − 上月汇率）。「—」表示这个账户没有这个币种</div>
+    </div>
+    <div class="tiles" id="bal-tiles"></div>
   </section>
 
   <!-- ===== 导出 ===== -->
@@ -460,7 +501,7 @@ function flash(el, msg) { $(el).textContent = msg; }
 
 // ---------- views ----------
 
-const VIEWS = ["add", "transactions", "export", "rates", "settings", "security"];
+const VIEWS = ["add", "transactions", "balances", "export", "rates", "settings", "security"];
 function route() {
   let view = location.hash.slice(1);
   if (view === "recognize") { view = "add"; showMethod("screenshot"); } // old bookmark
@@ -473,6 +514,7 @@ function route() {
   if (view === "export") { loadExportRows(); loadExportHistory(); }
   if (view === "settings") loadSettings();
   if (view === "rates") loadRates();
+  if (view === "balances") loadBalances($("bal-month").value || null);
   if (view === "security") loadSecurity();
 }
 window.addEventListener("hashchange", route);
@@ -1096,6 +1138,62 @@ $("tx-rows").addEventListener("click", e => {
   const tr = e.target.closest("tr[data-img-id]");
   if (tr) toggleServerImage(+tr.dataset.imgId, tr.dataset.name);
 });
+
+// ---------- balance sheet ----------
+
+const fmtRate = r => r == null ? "" : String(+r.toPrecision(8));
+const monthEnd = m => { const d = new Date(+m.slice(0, 4), +m.slice(5), 0); return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`; };
+// A money cell: red when negative, grey when zero, a warning when it couldn't be worked out
+function moneyCell(v, missing = "缺汇率") {
+  if (v === undefined) return `<td class="none">—</td>`;
+  if (v === null) return `<td class="missing">${missing}</td>`;
+  return `<td class="num ${v < 0 ? "neg" : v === 0 ? "zero" : ""}">${fmtAmount(v)}</td>`;
+}
+let bal = null;
+async function loadBalances(month) {
+  try { bal = await api("/api/balances" + (month ? "?month=" + month : "")); }
+  catch (e) { return flash("bal-status", "读取失败：" + e.message); }
+  flash("bal-status", "");
+  $("bal-month").innerHTML = bal.months.map(m => `<option value="${m}" ${m === bal.month ? "selected" : ""}>${fmtMonth(m)}</option>`).join("");
+  const i = bal.months.indexOf(bal.month);
+  $("bal-prev").disabled = !bal.month || i === bal.months.length - 1;
+  $("bal-next").disabled = !bal.month || i <= 0;
+
+  if (!bal.month) {
+    $("bal-card").hidden = true;
+    $("bal-tiles").innerHTML = "";
+    $("bal-warn").innerHTML = `<div class="warn-box">还没有设起始月。先去「<a href="#settings">设置</a>」最下面选起始月，填好那个月底各账户的余额。</div>`;
+    return;
+  }
+  const cur = bal.currencies, base = bal.base ?? "本位币";
+  const noRate = cur.filter(c => bal.rates[c] == null);
+  $("bal-warn").innerHTML = noRate.length
+    ? `<div class="warn-box">${fmtMonth(bal.month)}还没填 ${noRate.map(esc).join("、")} 的汇率，折算不出来。去「<a href="#rates">汇率</a>」页面填上。</div>` : "";
+  $("bal-card").hidden = false;
+  $("bal-title").textContent = monthEnd(bal.month) + " 结余";
+  $("bal-head").innerHTML = `<tr><th>账户</th>${cur.map(c => `<th class="num">${esc(c)}</th>`).join("")}</tr>`;
+  $("bal-rows").innerHTML = bal.accounts.map(a =>
+    `<tr><td>${esc(a.name)}</td>${cur.map(c => moneyCell(a.balances[c])).join("")}</tr>`).join("") ||
+    `<tr><td colspan="${cur.length + 1}" class="empty">还没有账户</td></tr>`;
+  const first = bal.month === bal.start_month;
+  $("bal-foot").innerHTML =
+    `<tr class="strong"><td>合计（原币）</td>${cur.map(c => moneyCell(bal.totals[c])).join("")}</tr>` +
+    `<tr><td>汇率</td>${cur.map(c => bal.rates[c] == null ? `<td class="missing">未填</td>` : `<td class="num">${fmtRate(bal.rates[c])}</td>`).join("")}</tr>` +
+    `<tr class="strong"><td>折算成${esc(base)}</td>${cur.map(c => moneyCell(bal.converted[c])).join("")}</tr>` +
+    `<tr><td>汇差盈亏</td>${cur.map(c => first ? `<td class="none">—</td>` : moneyCell(bal.fx_gain[c], "缺汇率")).join("")}</tr>`;
+
+  const tile = (label, v, sub = "", missing = "缺汇率") => `<div class="tile"><div class="label">${label}</div>` +
+    `<div class="value ${v < 0 ? "neg" : ""}" style="${v < 0 ? "color:#b91c1c" : ""}">${v == null ? `<span class="muted" style="font-size:16px">${missing}</span>` : fmtAmount(v)}</div>` +
+    `<div class="sub">${sub}</div></div>`;
+  $("bal-tiles").innerHTML =
+    tile(`${esc(base)}合计`, bal.total, "所有账户折算后相加") +
+    (first ? tile("总盈亏", null, "起始月没有上个月可比", "—") + tile("月度差额", null, "起始月没有上个月可比", "—")
+           : tile("总盈亏", bal.fx_gain_total, "各币种汇差盈亏之和") +
+             tile("月度差额", bal.change, bal.prev_total == null ? "上月合计算不出来" : `上月 ${fmtAmount(bal.prev_total)}；应等于本月收支（折算后）+ 总盈亏`));
+}
+$("bal-month").addEventListener("change", e => loadBalances(e.target.value));
+$("bal-prev").onclick = () => { const i = bal.months.indexOf(bal.month); loadBalances(bal.months[i + 1]); };
+$("bal-next").onclick = () => { const i = bal.months.indexOf(bal.month); loadBalances(bal.months[i - 1]); };
 
 // ---------- export ----------
 
