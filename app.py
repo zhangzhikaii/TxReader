@@ -8,6 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 # Settings come from .env (see .env.example); variables already set in the environment win
 load_dotenv(Path(__file__).parent / ".env")
@@ -20,6 +21,19 @@ PUBLIC_PATHS = {"/login", "/api/login"}
 
 for module in (pages, review, transactions, books, settings, email):
     app.include_router(module.router)
+
+
+class Static(StaticFiles):
+    """The page's CSS and scripts: checked with the server on every load (an unchanged file is a
+    quick 304), so an update never leaves the browser mixing old and new scripts."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
+app.mount("/static", Static(directory=pages.STATIC), name="static")
 
 
 @app.middleware("http")
@@ -35,7 +49,7 @@ async def require_login(request: Request, call_next):
 # ---------- errors -> responses (the most specific class wins) ----------
 
 def _detail(status: int):
-    return lambda request, exc: JSONResponse({"detail": str(exc)}, status_code=status)
+    return lambda _request, exc: JSONResponse({"detail": str(exc)}, status_code=status)
 
 
 app.add_exception_handler(ValueError, _detail(400))      # something the user can fix
@@ -44,11 +58,11 @@ app.add_exception_handler(auth.LoginError, _detail(401))
 
 
 @app.exception_handler(errors.NotFound)
-def not_found(request: Request, exc: errors.NotFound):
+def not_found(_request: Request, exc: errors.NotFound):
     return JSONResponse({"detail": exc.detail}, status_code=404)
 
 
 @app.exception_handler(lists.UnknownNames)
-def unknown_names(request: Request, exc: lists.UnknownNames):
+def unknown_names(_request: Request, exc: lists.UnknownNames):
     # New accounts / currencies / categories: the page asks, then sends the request again
     return JSONResponse({"detail": {"message": str(exc), "unknown": exc.unknown}}, status_code=409)

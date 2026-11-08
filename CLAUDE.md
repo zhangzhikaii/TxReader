@@ -7,7 +7,9 @@
 ## 结构
 
 ```
-app.py                    FastAPI：页面、登录检查（中间件）、全部 /api 接口
+app.py                    FastAPI 入口：登录检查（中间件）、异常 -> 响应（ValueError 400、NotFound 404、UnknownNames 409 等，接口里不用自己 try/except）、挂载路由和 /static
+txreader/routes/          接口，按功能一个 APIRouter：pages（页面、登录）、review（截图识别、待核对）、transactions（交易、导出）、books（期初余额、汇率、两张报表）、settings（清单）、email
+txreader/errors.py        公共的 NotFound（各模块可改 `detail` 提示文字）
 txreader/db.py            SQLite 表结构、旧库升级（`_migrate`）、账户 / 币种登记（`register_accounts`）、连接、截图存成 WebP（数据目录 TXREADER_DATA，默认 data/）
 txreader/store.py         识别入库流程、待核对行、确认入库、手动输入、交易、导出 CSV
 txreader/lists.py         账户 / 币种 / 种类清单：输入时的提示（`offered`）、找出新名称（`unknown`）、设置页的增删改排序
@@ -26,7 +28,19 @@ txreader/parsers/         每个来源一个解析器，parse_boxes(boxes, img) 
   receipt.py              纸质小票照片（各家版式不同）；按文本框倾斜角配对「合計」与金额
 txreader/models.py        Tx（解析结果）与 resolve_date（补全缺失的年 / 月，并标记为推测）
 txreader/records.py       build_records：合并多张截图、跨截图去重、按时间排序，生成行
-static/index.html         整个前端（记一笔 / 交易 / 收支 / 结余 / 导出 / 设置 / 登录记录七个页面；设置里再分账户 / 币种 / 种类 / 期初余额 / 月汇率 / 邮件，按 #hash 切换；记一笔里再分截图识别 / 手动输入 / 邮件导入），单文件原生 JS，无构建步骤
+static/index.html         页面结构（记一笔 / 交易 / 收支 / 结余 / 导出 / 设置 / 登录记录七个页面；设置里再分账户 / 币种 / 种类 / 期初余额 / 月汇率 / 邮件，按 #hash 切换；记一笔里再分截图识别 / 手动输入 / 邮件导入）
+static/app.css            全部样式
+static/js/                前端脚本，原生 JS、无构建步骤；普通 <script>（不是模块）按 index.html 里的顺序加载，共用一个全局作用域
+  common.js               $ / api / send / esc / 金额日期格式化 / moneyCell / tableKeys（表格里回车跳格）
+  viewer.js               右侧大图 / 邮件正文、缩略图
+  add.js                  记一笔的三种方式切换
+  recognize.js            SOURCES、截图上传、待核对表（邮件导入共用）
+  manual.js               手动输入、确认框；loadSuggestions（清单提示，别的页面也用）
+  email-import.js         从邮件更新、没认出来的邮件
+  transactions.js / monthly.js / balances.js / export.js / security.js   各自的页面
+  settings.js             设置页标签、账户 / 币种 / 种类清单（拖动排序）
+  opening.js / rates.js / email-settings.js                              设置里的期初余额、月汇率、邮件
+  main.js                 最后加载：按 #hash 切换页面（route）、启动
 static/login.html         登录页
 tests/test_logic.py       去重、日期推断、比对规则等纯逻辑测试
 tests/test_api.py         接口全流程测试（假识别结果 + 临时数据目录）
@@ -48,11 +62,15 @@ tests/test_samples.py     用 samples/ 里的真实截图对照期望结果（�
 ### 新增一个来源时要改
 
 1. `txreader/parsers/<source>.py`，并在 `parsers/__init__.py` 的 `PARSERS` 注册
-2. `static/index.html` 的 `<select id="source">` 和 `SOURCES`（上传提示、默认账户 / 币种 / 种类）
+2. `static/index.html` 的 `<select id="source">`，以及 `static/js/recognize.js` 的 `SOURCES`（上传提示、默认账户 / 币种 / 种类）
 3. `README.md` 的来源表格
 4. 若是滚动列表类截图，加入 `tests/test_samples.py` 的 `LIST_SOURCES`
 
-## 前端要点（static/index.html）
+## 前端要点（static/）
+
+- 脚本共用一个全局作用域：新文件里的顶层变量名不能和别的文件重复；文件加载时直接执行的代码只能用前面文件定义的东西（函数里的调用不受限制，`main.js` 最后才启动页面）。新加文件要写进 `index.html` 的 `<script>` 列表。
+- 表格里的输入框要「回车跳到下一行同一列」，用 `tableKeys(tbody, column, atEnd)`，不要再自己写 keydown。
+- `/static` 的文件响应头带 `Cache-Control: no-cache`，改完刷新页面就能拿到新版本。
 
 - 「记一笔」的添加方式由 `showMethod` / `setMethod` 切换（后者还会加载数据），存在 localStorage 的 `tx.method`。手动输入的行在 `mRows`，未入库的暂存在 `tx.manual.draft`。
 - 待核对行、交易都从服务器读取；`records` 是当前来源的待核对行，`images` 只是本次上传的缩略图。设置项存 localStorage，账户 / 币种 / 种类按来源分别记住；没手动改过的行跟随默认值。

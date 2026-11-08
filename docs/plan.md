@@ -99,9 +99,9 @@
 
 - [x] A. 后端错误处理统一：`txreader/errors.py` 放公共的 `NotFound`（404，各模块可以换提示文字）；`app.py` 统一注册 `ValueError → 400`、`NotFound → 404`、`UnknownNames → 409`、`MailError → 400`、`LoginError → 401`，删掉各接口里重复的 try/except
 - [x] B. 拆分 `app.py`：按模块拆成几个 `APIRouter`（页面与登录、截图识别与核对、交易与导出、期初余额 / 汇率 / 报表、设置清单、邮件），`app.py` 只留中间件、错误处理和挂载；启动命令仍是 `uvicorn app:app`
-- [ ] C. 拆分前端：仍是原生 JS、没有构建步骤。`index.html` 只留页面结构，CSS 移到 `static/app.css`，JS 按页面拆到 `static/js/`；把四处「表格里回车跳格」（手动输入、待核对、期初余额、月汇率）合并成一个公共函数
+- [x] C. 拆分前端：仍是原生 JS、没有构建步骤。`index.html` 只留页面结构，CSS 移到 `static/app.css`，JS 按页面拆到 `static/js/`；把四处「表格里回车跳格」（手动输入、待核对、期初余额、月汇率）合并成一个公共函数
 - [ ] D. 小清理：`books.py` 里重复的 `round(..., 2)` 换成一个小函数；看 `db._migrate` 要不要改成按版本号（`PRAGMA user_version`）升级，够用就不改
-- [ ] E. 更新 `CLAUDE.md` 的「结构」「前端要点」
+- [x] E. 更新 `CLAUDE.md` 的「结构」「前端要点」
 
 不做的：不换前端框架（要引入构建步骤，不划算）；金额不改成整数「分」存（牵动整个数据库和所有计算，现在两位小数四舍五入没出过问题）。
 

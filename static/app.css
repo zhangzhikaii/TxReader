@@ -1,0 +1,186 @@
+:root { --bg:#f6f7f9; --card:#fff; --text:#1f2328; --muted:#6b7280; --line:#e5e7eb;
+        --accent:#07c160; --income:#fff7e6; --warn:#fde8e8; --suspect:#f3e8ff; }
+* { box-sizing:border-box; }
+body { margin:0; font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+       background:var(--bg); color:var(--text); }
+.layout { display:flex; align-items:flex-start; }
+main { flex:1; min-width:0; max-width:1100px; margin:0 auto; padding:24px 16px; }
+/* Screenshot viewer: a column pinned to the right edge, as wide as the screenshot shown at full
+   height (capped so the table keeps its room). The page content stays centred in the space left. */
+#viewer { display:none; flex:0 0 auto; position:sticky; top:0; height:100vh;
+          overflow-y:auto; background:var(--card); border-left:1px solid var(--line); padding:0 12px 12px; }
+body.viewing #viewer { display:block; }
+/* width:0 + min-width:100%: a long file name must not widen the panel beyond the image */
+.viewer-bar { width:0; min-width:100%; position:sticky; top:0; display:flex; justify-content:space-between; align-items:center; gap:8px;
+              padding:12px 0 8px; background:var(--card); font-size:13px; color:var(--muted); }
+.viewer-bar span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* Whole screenshot fits the window height (aspect ratio kept by the max-* limits) */
+#viewer-img { display:block; max-height:calc(100vh - 72px); width:auto; height:auto; max-width:min(32vw, 480px);
+              margin:0 auto; border-radius:8px; border:1px solid var(--line); }
+.thumbs { display:flex; flex-wrap:wrap; gap:8px; }
+.thumbs:not(:empty) { margin-top:12px; }
+.thumb { position:relative; }
+.thumb-open { display:block; width:64px; height:112px; padding:0; background:none; border:2px solid var(--line);
+              border-radius:6px; overflow:hidden; }
+.thumb-open:hover { border-color:var(--muted); }
+.thumb-open.active { border-color:var(--accent); }
+.thumb-open img { display:block; width:100%; height:100%; object-fit:cover; object-position:top; }
+.thumb-del { position:absolute; top:-6px; right:-6px; width:20px; height:20px; padding:0; border-radius:50%;
+             background:#6b7280; color:#fff; font-size:13px; line-height:20px; text-align:center; }
+.thumb-del:hover { background:#dc2626; }
+/* Narrow screens: no room for two columns, so the viewer covers the page */
+@media (max-width:800px) {
+  body.viewing #viewer { position:fixed; inset:0; height:auto; width:auto; z-index:10; border:0; }
+  #viewer-img { max-width:100%; }
+}
+header { display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
+h1 { font-size:22px; margin:0; }
+nav { display:flex; gap:4px; flex-wrap:wrap; }
+nav a { padding:6px 12px; border-radius:6px; color:var(--text); text-decoration:none; font-size:14px; }
+nav a:hover { background:var(--line); }
+nav a.active { background:var(--accent); color:#fff; }
+#logout { margin-left:auto; }
+h2 { font-size:16px; margin:0 0 12px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+.settings { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
+label { display:flex; flex-direction:column; font-size:13px; color:var(--muted); gap:4px; }
+input, select { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; color:var(--text); background:#fff; }
+input[type=checkbox] { width:16px; height:16px; padding:0; margin:0; vertical-align:middle; }
+#drop { border:2px dashed var(--line); border-radius:10px; padding:32px; text-align:center; color:var(--muted); cursor:pointer; }
+#drop.over { border-color:var(--accent); color:var(--accent); }
+button { font:inherit; padding:8px 16px; border:0; border-radius:6px; background:var(--accent); color:#fff; cursor:pointer; }
+button.secondary { background:#e5e7eb; color:var(--text); }
+button.danger { background:#fee2e2; color:#b91c1c; }
+button:disabled { opacity:.5; cursor:default; }
+.bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px; }
+.status { color:var(--muted); font-size:14px; }
+.table-wrap { overflow-x:auto; }
+table { border-collapse:collapse; width:100%; font-size:14px; }
+th, td { border-bottom:1px solid var(--line); padding:6px 4px; text-align:left; white-space:nowrap; }
+td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+td.wrap { white-space:normal; }
+/* Column widths sized so the table fits without sideways scrolling, also with the viewer open */
+td input:not([type=checkbox]) { width:100%; min-width:72px; padding:4px 6px; }
+td.amt input { text-align:right; width:100px; font-variant-numeric:tabular-nums; }
+td.date input { width:160px; padding:4px; font-variant-numeric:tabular-nums; }
+td input[data-k="currency"] { width:60px; min-width:60px; }
+td input[data-k="merchant"], td input[data-k="description"] { min-width:180px; }
+td input[data-tx][data-k="category"] { min-width:90px; }
+td button { padding:4px 10px; }
+td button.icon { padding:2px 6px; background:none; color:var(--muted); font-size:15px; }
+td button.icon:hover { color:var(--text); background:var(--line); }
+td button.icon.active { color:var(--accent); }
+td input.guess { border-color:#f59e0b; background:#fffbeb; }
+td input.invalid { border-color:#dc2626; background:#fef2f2; }
+tr.income { background:var(--income); }
+tr.suspect { background:var(--suspect); }
+tr.newday td { border-top:2px solid #6b7280; }
+tr.warn td.flag { color:#b91c1c; }
+tr.exported { color:var(--muted); }
+tr.clickable { cursor:pointer; }
+tr.clickable:hover { background:#f9fafb; }
+tr.clickable.viewing { background:#ecfdf5; }
+.tag { display:inline-block; padding:0 6px; border-radius:4px; font-size:12px; background:#e9d5ff; color:#6b21a8; }
+.tag.done { background:#dcfce7; color:#166534; }
+.legend { font-size:13px; color:var(--muted); margin-top:8px; }
+.legend span.sw { display:inline-block; width:12px; height:12px; vertical-align:middle; border:1px solid var(--line); }
+details { margin-top:12px; font-size:14px; }
+details summary { cursor:pointer; color:var(--muted); }
+.empty { color:var(--muted); font-size:14px; padding:12px 0; }
+/* Ways of adding a record */
+.tabs { display:flex; gap:4px; margin-bottom:16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+.tabs button { background:none; color:var(--muted); border-radius:6px 6px 0 0; padding:8px 16px;
+               border-bottom:2px solid transparent; margin-bottom:-1px; }
+.tabs button:hover { color:var(--text); background:var(--line); }
+.tabs button.active { color:var(--text); border-bottom-color:var(--accent); font-weight:600; }
+.tabs .soon { font-size:11px; color:var(--muted); font-weight:normal; margin-left:4px; }
+td.dt input { width:190px; padding:4px; font-variant-numeric:tabular-nums; }
+td button.sign { width:56px; padding:4px 0; background:#fee2e2; color:#b91c1c; }
+td button.sign.in { background:#fef3c7; color:#92400e; }
+.muted { color:var(--muted); }
+/* Settings lists */
+/* Drag handle: hold and drag to reorder (pointer events, so touch works too) */
+.handle { display:inline-block; padding:2px 8px; color:var(--muted); font-size:16px; cursor:grab;
+          touch-action:none; user-select:none; border-radius:4px; }
+.handle:hover { color:var(--text); background:var(--line); }
+tr.dragging { background:#ecfdf5; box-shadow:0 2px 8px rgba(0,0,0,.12); }
+body.reordering, body.reordering * { cursor:grabbing !important; user-select:none; }
+.chip { display:inline-flex; align-items:center; gap:2px; padding:1px 4px 1px 8px; margin:2px 4px 2px 0;
+        border-radius:12px; background:#eef2ff; font-size:13px; }
+.chip button { padding:0 5px; background:none; color:var(--muted); font-size:13px; line-height:1.4; }
+.chip button:hover { color:#b91c1c; }
+.chip button:disabled { display:none; }
+td select.add-cur { padding:2px 4px; font-size:13px; }
+.add-row { display:flex; gap:8px; margin-top:12px; }
+.add-row input { max-width:240px; }
+.settings-help { font-size:13px; color:var(--muted); margin:-4px 0 12px; }
+/* Opening balances and rates: a grid of number inputs */
+table.grid td.num input { width:130px; text-align:right; font-variant-numeric:tabular-nums; }
+table.grid td.none { color:var(--line); text-align:right; }
+table.grid tr.total td { border-top:2px solid var(--line); font-weight:600; }
+table.grid td input.missing { background:#fffbeb; border-color:#fcd34d; }
+.inline-field { display:flex; flex-direction:row; align-items:center; gap:8px; margin-bottom:12px; color:var(--text); font-size:14px; }
+.inline-field input { width:auto; }
+/* Balance sheet */
+.month-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.month-bar select { min-width:140px; }
+.month-bar button { padding:6px 12px; }
+table.sheet td, table.sheet th { padding:6px 10px; }
+table.sheet td.num, table.sheet th.num { min-width:110px; }
+table.sheet td.none { color:var(--line); text-align:right; }
+table.sheet td.neg { color:#b91c1c; }
+table.sheet td.zero { color:var(--muted); }
+table.sheet td.missing { color:#b45309; text-align:right; }
+table.sheet tbody.foot tr:first-child td { border-top:2px solid #6b7280; }
+table.sheet tbody.foot td:first-child { color:var(--muted); }
+table.sheet tbody.foot tr.strong td { font-weight:600; }
+/* Balance total: the big number, with the change from last month beside it */
+.hero { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin-bottom:16px; }
+.hero .label { font-size:13px; color:var(--muted); }
+.hero .row { display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; margin-top:6px; }
+.hero .total { font-size:34px; font-weight:650; letter-spacing:-.01em; font-variant-numeric:tabular-nums; line-height:1.15; }
+.hero .total.neg { color:#b91c1c; }
+.hero .total .unit { font-size:15px; font-weight:500; color:var(--muted); margin-left:6px; letter-spacing:0; }
+.hero .missing { font-size:18px; color:#b45309; }
+.delta { display:flex; flex-direction:column; gap:2px; }
+.delta .chg { display:inline-flex; align-items:center; gap:6px; font-size:15px; font-weight:600; font-variant-numeric:tabular-nums;
+              padding:2px 10px; border-radius:999px; width:fit-content; }
+.delta .chg.up { color:#15803d; background:#dcfce7; }
+.delta .chg.down { color:#b91c1c; background:#fee2e2; }
+.delta .chg.flat, .delta .chg.na { color:var(--muted); background:#f3f4f6; font-weight:500; }
+.delta .pct { font-weight:500; opacity:.85; }
+.delta .vs { font-size:12px; color:var(--muted); padding-left:2px; }
+/* Monthly report */
+.parts { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.part { font-size:13px; color:var(--muted); background:#f3f4f6; border-radius:999px; padding:2px 10px; font-variant-numeric:tabular-nums; }
+.part b { color:var(--text); font-weight:600; }
+.check { font-size:13px; border-radius:999px; padding:2px 10px; }
+.check.ok { color:#15803d; background:#dcfce7; }
+.check.diff { color:#b91c1c; background:#fee2e2; }
+.month-bar .toggle { flex-direction:row; align-items:center; gap:6px; color:var(--text); font-size:14px; }
+.month-bar .toggle:first-of-type { margin-left:auto; }
+.month-bar .toggle select { padding:4px 6px; }
+table.sheet td .count { font-size:12px; color:var(--muted); margin-left:6px; }
+table.sheet td.blank { color:var(--line); }
+.warn-box { background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:10px 12px; font-size:14px; margin-bottom:12px; }
+/* Confirmation before storing manual rows */
+dialog { border:0; border-radius:12px; padding:20px; width:min(860px, calc(100vw - 32px)); max-height:calc(100vh - 48px);
+         box-shadow:0 20px 50px rgba(0,0,0,.25); color:var(--text); }
+dialog::backdrop { background:rgba(15,23,42,.45); }
+dialog .notice { background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:14px; }
+dialog .notice ul { margin:6px 0; padding-left:20px; }
+dialog .totals { font-size:14px; margin-top:10px; }
+dialog .actions { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
+/* Email import */
+textarea { font:inherit; font-size:13px; width:100%; padding:6px 8px; border:1px solid var(--line); border-radius:6px; color:var(--text); background:#fff; }
+#viewer-text { width:min(32vw, 480px); margin:0; padding:12px; white-space:pre-wrap; word-break:break-word; font-size:13px;
+               line-height:1.5; background:#f9fafb; border:1px solid var(--line); border-radius:8px; }
+#viewer-img[hidden] { display:none; }
+@media (max-width:800px) { #viewer-text { width:auto; } }
+.rule { border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:12px; }
+.rule.draft { border-style:dashed; border-color:var(--accent); }
+.rule .settings { grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); }
+.rule .patterns { display:grid; grid-template-columns:1fr; gap:8px; margin-top:8px; }
+.rule .patterns input, #em-redirect { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; }
+.rule .bar { margin-top:8px; }
+#em-redirect { padding:2px 6px; background:#f3f4f6; border-radius:4px; color:var(--text); user-select:all; word-break:break-all; }
