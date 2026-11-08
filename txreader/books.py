@@ -9,13 +9,17 @@
 import re
 from datetime import date
 
+from . import errors
 from .db import connect
 
 MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
-class NotFound(LookupError):
-    pass
+class NotFound(errors.NotFound):
+    """A currency that is not on the list; raised with its name."""
+    @property
+    def detail(self):
+        return f"没有币种「{self}」，请刷新页面"
 
 
 def _check_month(month) -> str:

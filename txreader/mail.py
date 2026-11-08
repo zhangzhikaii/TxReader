@@ -27,6 +27,7 @@ from urllib.parse import urlencode
 import httpx
 
 from .db import connect, now
+from .errors import NotFound
 
 AUTHORIZE_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
 TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
@@ -55,10 +56,6 @@ def _request(method: str, url: str, **kwargs) -> httpx.Response:
 
 class MailError(Exception):
     """Something the user has to fix (settings, sign-in) or a failed call to the mail server."""
-
-
-class NotFound(LookupError):
-    pass
 
 
 # ---------- config values ----------

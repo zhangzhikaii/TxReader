@@ -8,7 +8,7 @@ import threading
 from dataclasses import asdict
 from datetime import datetime
 
-from . import lists
+from . import errors, lists
 from .db import connect, now, register_accounts, save_image, sha256
 from .matching import match_rows
 from .models import Tx
@@ -24,8 +24,8 @@ DATE_RE = re.compile(r"^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}$")
 _match_lock = threading.Lock()
 
 
-class NotFound(LookupError):
-    pass
+class NotFound(errors.NotFound):
+    detail = "找不到这条记录，可能已被删除或已入库，请刷新页面"
 
 
 # ---------- recognize ----------

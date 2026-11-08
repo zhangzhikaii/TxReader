@@ -5,13 +5,10 @@ Transactions keep the names as text (so the CSV export stays the same); renaming
 renames it in the transactions too.
 """
 from .db import default_base, connect, now
+from .errors import NotFound
 
 KINDS = {"accounts": "account", "currencies": "currency", "categories": "category"}  # table -> transactions column
 KIND_LABELS = {"accounts": "账户", "currencies": "币种", "categories": "种类"}
-
-
-class NotFound(LookupError):
-    pass
 
 
 def _check_kind(kind: str) -> str:
