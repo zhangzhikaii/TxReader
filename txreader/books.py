@@ -181,6 +181,12 @@ def _by_currency(holdings: dict[tuple[str, str], float]) -> dict[str, float]:
     return out
 
 
+def _sum(values):
+    """The rounded sum, or None if any of the values couldn't be worked out (is None)."""
+    values = list(values)
+    return None if None in values else round(sum(values), 2)
+
+
 def _convert(totals: dict[str, float], rates: dict[str, float]):
     """Each currency's total in the base currency (None when its rate is missing), and their
     sum (None if any non-zero total can't be converted)."""
@@ -263,8 +269,7 @@ def balances(month: str | None = None, today: date | None = None) -> dict:
                 else:
                     gains[c] = None
             out["fx_gain"] = gains
-            if all(g is not None for g in gains.values()):
-                out["fx_gain_total"] = round(sum(gains.values()), 2)
+            out["fx_gain_total"] = _sum(gains.values())
             out["prev_total"] = _convert(prev_totals, prev_rates)[1]
             if total is not None and out["prev_total"] is not None:
                 out["change"] = round(total - out["prev_total"], 2)
@@ -313,15 +318,12 @@ def monthly(month: str | None = None, today: date | None = None) -> dict:
     categories = []
     for name in names:
         amounts = flows.get(name, {})
-        cells = [conv(c, v) for c, v in amounts.items()]
         categories.append({"name": name, "amounts": amounts, "count": counts.get(name, 0),
-                           "converted": None if None in cells else round(sum(cells), 2)})
+                           "converted": _sum(conv(c, v) for c, v in amounts.items())})
     totals = {c: round(sum(f.get(c, 0) for f in flows.values()), 2) for c in currencies}
-    converted = {c: conv(c, v) for c, v in totals.items()}
+    converted, converted_total = _convert(totals, rates)
     out = {"month": month, "months": months, "base": base[0] if base else None, "currencies": currencies,
-           "categories": categories, "totals": totals, "converted": converted,
-           "converted_total": None if any(v is None and totals[c] for c, v in converted.items())
-           else round(sum(v or 0 for v in converted.values()), 2),
+           "categories": categories, "totals": totals, "converted": converted, "converted_total": converted_total,
            "rates": {c: rates.get(c) for c in currencies},
            "fx_gain": None, "fx_gain_total": None, "fx_note": None,
            "base_total": {}, "base_grand_total": None, "balance_change": None, "check": None}
@@ -341,8 +343,7 @@ def monthly(month: str | None = None, today: date | None = None) -> dict:
     for c in currencies:
         v, g = converted[c], gains.get(c, 0.0)
         out["base_total"][c] = None if v is None and totals[c] or g is None else round((v or 0) + g, 2)
-    if all(v is not None for v in out["base_total"].values()):
-        out["base_grand_total"] = round(sum(out["base_total"].values()), 2)
+    out["base_grand_total"] = _sum(out["base_total"].values())
     if out["base_grand_total"] is not None and out["balance_change"] is not None:
         # Each cell is rounded on its own, so allow a few cents
         out["check"] = "ok" if abs(out["base_grand_total"] - out["balance_change"]) < 0.05 else "diff"
