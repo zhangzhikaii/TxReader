@@ -52,7 +52,8 @@ def clear(confirm=ask_yes) -> int:
         return 0
     print(f"Database: {db}")
     print(f"This will permanently delete {n} transaction(s), {exports} export record(s) and the "
-          f"{confirmed} confirmed screenshot row(s) behind them (so those screenshots can be recognized again).")
+          f"{confirmed} confirmed screenshot / email row(s) behind them (so those screenshots can be recognized\n"
+          "and those emails read again). The next email update starts over from a date you pick.")
     print("Kept: pending rows, screenshots, the account / currency / category lists, opening balances, rates.")
     if not confirm("Delete them? Type 'yes' to continue: "):
         print("Cancelled. Nothing was deleted.")
@@ -61,7 +62,12 @@ def clear(confirm=ask_yes) -> int:
         conn.execute("DELETE FROM export_items")
         conn.execute("DELETE FROM exports")
         conn.execute("DELETE FROM transactions")
+        # Emails behind them are forgotten too, so they can be read again
+        email_ids = [r[0] for r in conn.execute(
+            "SELECT email_id FROM ocr_rows WHERE status = 'confirmed' AND email_id IS NOT NULL")]
         conn.execute("DELETE FROM ocr_rows WHERE status = 'confirmed'")
+        conn.executemany("DELETE FROM emails WHERE id = ?", [(i,) for i in email_ids])
+        conn.execute("DELETE FROM config WHERE key = 'email_last_fetch'")
     print(f"Deleted {n} transaction(s).")
     return 0
 

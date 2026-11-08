@@ -5,4 +5,4 @@ uvicorn
 python-dotenv
 python-multipart
 pytest
-httpx  # tests only (FastAPI TestClient)
+httpx  # email import (Microsoft Graph); also used by the tests

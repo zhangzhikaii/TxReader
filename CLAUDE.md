@@ -1,6 +1,6 @@
 # TxReader
 
-用户自己用的记账网页。目前的主要功能：上传手机 App 的交易截图，用 OCR 识别出交易，核对、修改后入库，再导出 CSV。识别完全在本地（RapidOCR），不联网。正在扩展成记账系统（手动输入、邮件导入、月度收支、账户结余与汇差）。用户用中文交流。
+用户自己用的记账网页：上传手机 App 的交易截图（OCR 识别）或从 Outlook 读通知邮件，核对、修改后入库；也可以手动输入；有月度收支、账户结余与汇差，能导出 CSV。截图识别完全在本地（RapidOCR）；只有邮件导入会联网（Microsoft Graph，用户点「从邮件更新」时才读）。用户用中文交流。
 
 运行、CSV 格式、各来源的说明见 `README.md`。当前计划见 `docs/plan.md`（设置页、期初余额与月汇率、账户结余、月度收支、邮件导入、部署），做完一步就在上面打勾，决定有变就更新它。月度收支表参照 `docs/example.csv`，账户结余表参照 `docs/example2.csv`（用户自己写的，里面是真实数字：只看结构，不要把数字抄进代码、测试或文档，也不要提交）。
 
@@ -14,6 +14,7 @@ txreader/lists.py         账户 / 币种 / 种类清单：输入时的提示（
 txreader/devtools.py      开发用命令：`python -m txreader.devtools clear`（删除所有交易，要输入 yes）、`seed <file>`（从 seed/ 导入 CSV 并登记清单）
 txreader/books.py         期初余额（起始月 + 账户 × 币种）、月汇率（1 外币 = 多少本位币，手填）、账户结余（`balances`：月底结余、折算、汇差、月度差额）；月度收支（`monthly`：种类 × 币种、折算、汇差、和结余页核对）
 txreader/matching.py      新识别的行与库里已有行比对（跳过 / 合并 / 疑似重复 / 新增）
+txreader/mail.py          邮件导入：Outlook OAuth（Client ID / secret / 令牌存在 config 表）、邮件规则（`email_rules`：发件人、标题、三个正则）、读取上次之后的邮件（`fetch`）、识别、重新识别没认出来的
 txreader/auth.py          单用户密码登录、会话（闲置超时 + 30 天上限）、登录记录、错误次数锁定；`python -m txreader.auth` 生成密码哈希（填到 `.env`）
 txreader/ocr.py           RapidOCR 封装：图片 -> Box(text, x0, y0, x1, y1, score, angle)
 txreader/parsers/         每个来源一个解析器，parse_boxes(boxes, img) -> (list[Tx], warnings)
@@ -25,15 +26,16 @@ txreader/parsers/         每个来源一个解析器，parse_boxes(boxes, img) 
   receipt.py              纸质小票照片（各家版式不同）；按文本框倾斜角配对「合計」与金额
 txreader/models.py        Tx（解析结果）与 resolve_date（补全缺失的年 / 月，并标记为推测）
 txreader/records.py       build_records：合并多张截图、跨截图去重、按时间排序，生成行
-static/index.html         整个前端（记一笔 / 交易 / 收支 / 结余 / 导出 / 设置 / 登录记录七个页面；设置里再分账户 / 币种 / 种类 / 期初余额 / 月汇率，按 #hash 切换；记一笔里再分截图识别 / 手动输入 / 邮件导入），单文件原生 JS，无构建步骤
+static/index.html         整个前端（记一笔 / 交易 / 收支 / 结余 / 导出 / 设置 / 登录记录七个页面；设置里再分账户 / 币种 / 种类 / 期初余额 / 月汇率 / 邮件，按 #hash 切换；记一笔里再分截图识别 / 手动输入 / 邮件导入），单文件原生 JS，无构建步骤
 static/login.html         登录页
 tests/test_logic.py       去重、日期推断、比对规则等纯逻辑测试
 tests/test_api.py         接口全流程测试（假识别结果 + 临时数据目录）
 tests/test_devtools.py    开发用命令的测试
+tests/test_email.py       邮件导入全流程测试（假的微软服务器：`mail._token_call` / `mail._messages`）
 tests/test_samples.py     用 samples/ 里的真实截图对照期望结果（没有 samples/ 时自动跳过）
 ```
 
-数据流：截图（按哈希存成 WebP，传过的直接用上次结果）→ OCR Box → 来源解析器 → `Tx` → `build_records` → `match_rows` 与库里比对 → 新行存为 `ocr_rows`（pending）→ 前端核对、修改（存为 draft）→ 确认后写入 `transactions`（`origin = screenshot`）→ 导出 CSV 并记录到 `exports`。手动输入直接写入 `transactions`（`origin = manual`，没有 `ocr_row_id`）。账户 / 币种 / 种类清单在 `accounts`、`currencies`、`account_currencies`（一个账户可有多个币种）、`categories`，各有 `sort`，币种有 `is_base`：截图入库时自动登记，手动输入遇到新的要用户在确认框里同意（接口参数 `add_accounts`，否则 409）；交易里仍存名称文字，设置页改名时一起改。
+数据流：截图（按哈希存成 WebP，传过的直接用上次结果）→ OCR Box → 来源解析器 → `Tx` → `build_records` → `match_rows` 与库里比对 → 新行存为 `ocr_rows`（pending）→ 前端核对、修改（存为 draft）→ 确认后写入 `transactions`（`origin = screenshot`）→ 导出 CSV 并记录到 `exports`。手动输入直接写入 `transactions`（`origin = manual`，没有 `ocr_row_id`）。邮件：点「从邮件更新」→ 读 `email_last_fetch` 到现在收到的邮件 → 按规则挑出、存进 `emails`（按 message_id 去重，认不出来的也存，可以改规则后重新识别）→ 识别出的行存为 `ocr_rows`（`source = email`，`email_id`，没有 `image_id`；规则的账户 / 币种 / 种类放在 `draft` 里）→ 和截图一样核对入库（`origin = email`）。账户 / 币种 / 种类清单在 `accounts`、`currencies`、`account_currencies`（一个账户可有多个币种）、`categories`，各有 `sort`，币种有 `is_base`：截图入库时自动登记，手动输入遇到新的要用户在确认框里同意（接口参数 `add_accounts`，否则 409）；交易里仍存名称文字，设置页改名时一起改。
 
 ## 约定
 
@@ -58,6 +60,8 @@ tests/test_samples.py     用 samples/ 里的真实截图对照期望结果（�
 - 删除缩略图只是从页面移除，不影响已识别出的行；每行的 🖼 按钮从服务器打开它的原截图。
 - 点缩略图在右侧打开大图，方便对照核对；窄屏时大图全屏显示。
 - 所有请求走 `api()`，收到 401 跳转到 /login。
+- 「待核对」卡片（`#result`）截图识别和邮件导入共用：`pendingSource()` 在邮件标签下是 `email`，否则是所选截图来源；`loadPending` 发现来源变了会先 `clearSession()`。邮件行的 ✉ 按钮在右侧大图位置显示邮件正文（`showImage` 传 `text`）。
+- 微软登录回来跳到 `/#settings-email`，带 `email_connected` 或 `email_error` 参数。
 
 ## 隐私（重要）
 
@@ -67,6 +71,7 @@ tests/test_samples.py     用 samples/ 里的真实截图对照期望结果（�
 - 跑样例测试用 `.venv/bin/python -m pytest -q --tb=no`，只看通过 / 失败数量，避免截图内容出现在输出里。
 - 需要调试解析器时，请用户提供打码后的截图或描述版式。
 - 代码、docstring、提交信息里不要出现真实人名。
+- 数据库的 `emails` 表里是用户真实的邮件正文，`config` 里有 Client secret 和令牌，同样不要在未询问的情况下查询。
 
 ## 测试与提交
 

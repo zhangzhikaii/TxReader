@@ -178,6 +178,19 @@
   dialog .notice ul { margin:6px 0; padding-left:20px; }
   dialog .totals { font-size:14px; margin-top:10px; }
   dialog .actions { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
+  /* Email import */
+  textarea { font:inherit; font-size:13px; width:100%; padding:6px 8px; border:1px solid var(--line); border-radius:6px; color:var(--text); background:#fff; }
+  #viewer-text { width:min(32vw, 480px); margin:0; padding:12px; white-space:pre-wrap; word-break:break-word; font-size:13px;
+                 line-height:1.5; background:#f9fafb; border:1px solid var(--line); border-radius:8px; }
+  #viewer-img[hidden] { display:none; }
+  @media (max-width:800px) { #viewer-text { width:auto; } }
+  .rule { border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:12px; }
+  .rule.draft { border-style:dashed; border-color:var(--accent); }
+  .rule .settings { grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); }
+  .rule .patterns { display:grid; grid-template-columns:1fr; gap:8px; margin-top:8px; }
+  .rule .patterns input, #em-redirect { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; }
+  .rule .bar { margin-top:8px; }
+  #em-redirect { padding:2px 6px; background:#f3f4f6; border-radius:4px; color:var(--text); user-select:all; word-break:break-all; }
 </style>
 </head>
 <body>
@@ -202,7 +215,7 @@
    <div class="tabs" role="tablist">
      <button data-method="screenshot" role="tab">截图识别</button>
      <button data-method="manual" role="tab">手动输入</button>
-     <button data-method="email" role="tab">邮件导入<span class="soon">整合中</span></button>
+     <button data-method="email" role="tab">邮件导入</button>
    </div>
 
    <!-- 手动输入 -->
@@ -253,7 +266,25 @@
 
    <!-- 邮件导入 -->
    <div id="method-email" hidden>
-    <div class="card empty">邮件导入正在整合中：以后会自动读取银行 / 支付的通知邮件，识别出的交易同样先进入待核对。</div>
+    <div class="card">
+      <div id="e-setup" class="warn-box" hidden></div>
+      <div id="e-last" class="status"></div>
+      <label class="inline-field" id="e-start-field" hidden>第一次从这天开始读<input id="e-start" type="date"></label>
+      <div class="bar">
+        <button id="e-fetch">从邮件更新</button>
+        <span id="e-status" class="status"></span>
+      </div>
+      <div class="legend">读取上次更新之后收到的邮件，按「<a href="#settings-email">设置 › 邮件</a>」里的规则识别；认出来的交易进入下面的待核对，核对后入库。读过的邮件不会再读第二次</div>
+      <details id="e-failed" hidden>
+        <summary></summary>
+        <div class="table-wrap"><table>
+          <thead><tr><th>收到时间</th><th>标题</th><th>原因</th><th></th></tr></thead>
+          <tbody id="e-failed-rows"></tbody>
+        </table></div>
+        <div class="bar"><button id="e-retry" class="secondary">按现在的规则重新识别</button></div>
+        <div class="legend">改好规则的正则后，点上面的按钮再识别一次</div>
+      </details>
+    </div>
    </div>
 
    <!-- 截图识别 -->
@@ -283,6 +314,9 @@
       <div class="bar"><span id="status" class="status"></span></div>
     </div>
 
+   </div>
+
+   <!-- 待核对（截图识别、邮件导入共用） -->
     <div class="card" id="result" hidden>
       <h2>待核对</h2>
       <div class="table-wrap">
@@ -292,14 +326,13 @@
         </table>
       </div>
       <div id="no-pending" class="empty" hidden>没有待核对的交易</div>
-      <div class="legend"><span class="sw" style="background:var(--income)"></span> 收入（请确认种类）　<span class="sw" style="background:var(--suspect)"></span> 疑似重复（日期金额相同、商户不同，默认不勾选）　⚠ 日期或正负号是推测的　日期格式 2026/10/29 22:12:00<br>修改会自动保存；入库后只能改种类和描述，其他内容请在提交前核对好</div>
+      <div class="legend"><span class="sw" style="background:var(--income)"></span> 收入（请确认种类）　<span class="sw" style="background:var(--suspect)"></span> 疑似重复（日期金额相同、商户不同，默认不勾选）　⚠ 日期或正负号是推测的　日期格式 2026/10/29 22:12:00　🖼 / ✉ 查看原截图 / 原邮件<br>修改会自动保存；入库后只能改种类和描述，其他内容请在提交前核对好</div>
       <div class="bar">
         <button id="confirm">提交入库</button>
         <button id="delete-checked" class="danger">删除所选</button>
       </div>
       <details id="skipped" hidden><summary></summary><div class="table-wrap"><table><tbody id="skipped-rows"></tbody></table></div></details>
     </div>
-   </div>
   </section>
 
   <!-- ===== 交易 ===== -->
@@ -320,7 +353,7 @@
         </table>
       </div>
       <div class="bar"><span id="tx-status" class="status"></span></div>
-      <div class="legend">截图识别的交易点一行可以查看原截图。入库后只能修改种类和描述，改完自动保存</div>
+      <div class="legend">截图识别、邮件导入的交易点一行可以查看原截图 / 原邮件。入库后只能修改种类和描述，改完自动保存</div>
     </div>
   </section>
 
@@ -415,6 +448,7 @@
      <button data-set-tab="categories" role="tab">种类</button>
      <button data-set-tab="opening" role="tab">期初余额</button>
      <button data-set-tab="rates" role="tab">月汇率</button>
+     <button data-set-tab="email" role="tab">邮件</button>
    </div>
     <div class="card" data-set-panel="accounts">
       <h2>账户</h2>
@@ -464,6 +498,40 @@
       <div class="bar"><span id="fx-status" class="status"></span></div>
       <div class="legend">黄色是还没填的。改完离开输入框就会保存；清空即删除这个月的汇率。汇差盈亏 = 上月底存量 ×（本月汇率 − 上月汇率）</div>
     </div>
+    <div class="card" data-set-panel="email">
+      <h2>连接 Outlook</h2>
+      <p class="settings-help">在 Azure 门户的「应用注册」里建一个应用：平台选「Web」，加一个重定向 URI；API 权限加上 Microsoft Graph 的 Mail.Read 和 offline_access（委托）；再新建一个客户端密码。把「应用程序（客户端）ID」、密码的「值」和重定向 URI 填在这里，保存后点「连接 Outlook」登录邮箱，或者在下面直接填 refresh token</p>
+      <div class="settings">
+        <label>Client ID<input id="em-client-id" autocomplete="off" spellcheck="false"></label>
+        <label>Client secret<input id="em-secret" type="password" autocomplete="new-password"></label>
+        <label>回调地址（和 Azure 里的重定向 URI 完全一致）<input id="em-redirect-uri" autocomplete="off" spellcheck="false"></label>
+      </div>
+      <p class="settings-help">回调地址空着就用 <code id="em-redirect"></code>。Azure 里 http 只允许 localhost；已经注册过 <code>http://localhost:8000</code> 的话直接填它也行（首页会把授权码转过来）</p>
+      <div class="bar">
+        <button id="em-save-cred" class="secondary">保存</button>
+        <button id="em-connect">连接 Outlook</button>
+        <button id="em-disconnect" class="danger">断开</button>
+        <span id="em-conn" class="status"></span>
+      </div>
+      <details>
+        <summary>不在网页里登录，直接填 refresh token</summary>
+        <p class="settings-help">用别的方式拿到的 refresh token（同一个 Client ID 的）贴在这里，保存时会马上试着刷新一次，确认能用。access token 只有 1 小时有效，填它没用</p>
+        <div class="add-row"><input id="em-token" type="password" autocomplete="off" placeholder="refresh token"><button id="em-save-token" class="secondary">保存 token</button></div>
+      </details>
+    </div>
+    <div class="card" data-set-panel="email">
+      <h2>邮件规则</h2>
+      <p class="settings-help">一种通知邮件一条规则：发件人一致（写成 @域名 表示这个域名下的所有地址）、标题包含关键词（空着表示不限）的邮件才会读。三个正则各有一对括号，括号里的部分就是取出来的值；金额一律记为支出。改完离开输入框就会保存</p>
+      <div id="em-rules"></div>
+      <div class="bar"><button id="em-add-rule" class="secondary">＋ 添加规则</button><span id="em-status" class="status"></span></div>
+    </div>
+    <div class="card" data-set-panel="email">
+      <h2>试一下</h2>
+      <p class="settings-help">把一封通知邮件的正文贴在这里，看规则能不能认出来（用输入框里现在的正则，不会保存任何东西）</p>
+      <label class="inline-field">规则<select id="em-test-rule"></select></label>
+      <textarea id="em-test-text" rows="8" placeholder="粘贴邮件正文"></textarea>
+      <div class="bar"><button id="em-test" class="secondary">识别</button><span id="em-test-result" class="status"></span></div>
+    </div>
   </section>
 
 
@@ -492,9 +560,10 @@
   </section>
 </main>
 
-<aside id="viewer" aria-label="截图预览">
+<aside id="viewer" aria-label="截图 / 邮件预览">
   <div class="viewer-bar"><span id="viewer-name"></span><button id="viewer-close" class="secondary">关闭</button></div>
   <img id="viewer-img" alt="">
+  <pre id="viewer-text" hidden></pre>
 </aside>
 </div>
 
@@ -521,6 +590,10 @@ let images = [];    // screenshots uploaded in this session: { key, name, url }
 let nextImgId = 1;
 let viewing = null; // key of the screenshot shown in the viewer
 let session = 0;    // bumped on source switch, so results of uploads still in flight are dropped
+let recordsSource = null; // the source `records` belong to: a screenshot source key or "email"
+// The pending rows shown: email rows on the email tab, else the chosen screenshot source's
+const pendingSource = () => method === "email" ? "email" : $("source").value;
+const pflash = msg => flash(method === "email" ? "e-status" : "status", msg);
 
 const load = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const save = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
@@ -567,19 +640,19 @@ const VIEWS = ["add", "transactions", "monthly", "balances", "export", "settings
 function route() {
   let view = location.hash.slice(1);
   if (view === "recognize") { view = "add"; showMethod("screenshot"); } // old bookmark
-  if (view === "rates") { // rates moved into settings; old links still work
+  if (view === "rates" || view === "settings-email") { // rates moved into settings; old links still work
+    showSetTab(view === "rates" ? "rates" : "email");
     view = "settings";
-    showSetTab("rates");
     history.replaceState(null, "", "#settings");
   }
   if (!VIEWS.includes(view)) view = "add";
   for (const v of VIEWS) $("view-" + v).hidden = v !== view;
   for (const a of document.querySelectorAll("nav a")) a.classList.toggle("active", a.dataset.view === view);
   showImage(null);
-  if (view === "add") { if (method === "screenshot") loadPending(); loadSuggestions(); }
+  if (view === "add") { if (method !== "manual") loadPending(); if (method === "email") loadEmailState(); loadSuggestions(); }
   if (view === "transactions") loadSuggestions().then(fillTxFilters).then(loadTransactions); // lists may have changed in settings
   if (view === "export") { loadExportRows(); loadExportHistory(); }
-  if (view === "settings") { loadSettings(); loadRates(); }
+  if (view === "settings") { loadSettings(); loadRates(); loadEmailSettings(); }
   if (view === "balances") loadBalances($("bal-month").value || null);
   if (view === "monthly") loadMonthly($("mo-month").value || null);
   if (view === "security") loadSecurity();
@@ -600,11 +673,13 @@ function showMethod(m) {
   save("tx.method", m);
   for (const x of METHODS) $("method-" + x).hidden = x !== m;
   for (const b of document.querySelectorAll("#view-add .tabs button")) b.classList.toggle("active", b.dataset.method === m);
+  $("result").hidden = m === "manual" || (records.length === 0 && skipped.length === 0);
 }
 function setMethod(m) {
   showMethod(m);
   showImage(null);
-  if (m === "screenshot") loadPending();
+  if (m !== "manual") loadPending();
+  if (m === "email") loadEmailState();
   if (m === "manual") focusManual();
 }
 document.querySelector("#view-add .tabs").addEventListener("click", e => {
@@ -876,6 +951,8 @@ function updateCounts(counts) {
     const n = counts[o.value] || 0;
     o.textContent = SOURCE_LABELS[o.value] + (n ? `（${n} 条待核对）` : "");
   }
+  const n = counts.email || 0;
+  document.querySelector('[data-method="email"]').innerHTML = "邮件导入" + (n ? `<span class="soon">${n} 条待核对</span>` : "");
 }
 
 function sortRecords() {
@@ -889,7 +966,9 @@ $("order").addEventListener("change", () => { sortRecords(); renderPending(); })
 // Replace the table with the server's pending list, keeping checkboxes the user already set
 function setPending(rows) {
   const prev = new Map(records.map(r => [r.id, r.checked]));
-  const d = { account: $("account").value, currency: $("currency").value, category: $("category").value };
+  // Email rows bring their own account / currency / category (from the rule)
+  const d = pendingSource() === "email" ? {}
+    : { account: $("account").value, currency: $("currency").value, category: $("category").value };
   records = rows.map(r => {
     const own = new Set(SOURCE_SETTINGS.filter(k => k in r)); // values edited by hand earlier
     return { ...d, ...r, own, checked: prev.get(r.id) ?? !r.suspect };
@@ -899,14 +978,16 @@ function setPending(rows) {
 }
 
 async function loadPending() {
+  const src = pendingSource();
+  if (recordsSource !== src) { clearSession(); recordsSource = src; } // switched between screenshots and email
   const mySession = session;
   try {
-    const data = await api(`/api/pending?source=${$("source").value}`);
+    const data = await api(`/api/pending?source=${src}`);
     if (mySession !== session) return;
     updateCounts(data.counts);
     setPending(data.pending);
   } catch (e) {
-    flash("status", "读取待核对失败：" + e.message);
+    pflash("读取待核对失败：" + e.message);
   }
 }
 
@@ -947,7 +1028,7 @@ async function upload(files) {
   }
 }
 async function loadCounts() {
-  try { updateCounts((await api(`/api/pending?source=${$("source").value}`)).counts); } catch {}
+  try { updateCounts((await api(`/api/pending?source=${pendingSource()}`)).counts); } catch {}
 }
 
 const byId = id => records.find(r => r.id === +id);
@@ -960,7 +1041,7 @@ function suspectTip(s) {
 function renderPending() {
   // Remember which cell had focus so it can be restored after rebuilding the table
   const active = document.activeElement?.dataset ?? {};
-  $("result").hidden = records.length === 0 && skipped.length === 0;
+  $("result").hidden = method === "manual" || (records.length === 0 && skipped.length === 0);
   $("no-pending").hidden = records.length > 0;
   $("rows").innerHTML = records.map((r, i) => {
     const warn = r.year_guessed || r.sign_guessed;
@@ -977,7 +1058,9 @@ function renderPending() {
       <td><input data-id="${r.id}" data-k="category" value="${esc(r.category)}" list="m-categories"></td>
       <td><input data-id="${r.id}" data-k="merchant" value="${esc(r.merchant)}"></td>
       <td class="flag" title="${esc(r.suspect ? suspectTip(r.suspect) : tip)}">${warn ? "⚠" : ""}${r.suspect ? ' <span class="tag">疑似重复</span>' : ""}</td>
-      <td><button class="icon ${viewing === imgKey ? "active" : ""}" data-view-img="${r.image_id}" data-name="${esc(r.image_name)}" title="查看原截图" tabindex="-1">🖼</button></td>
+      <td>${r.email_id != null
+        ? `<button class="icon ${viewing === "mail-" + r.email_id ? "active" : ""}" data-view-mail="${r.email_id}" data-name="${esc(r.email_subject)}" title="查看原邮件" tabindex="-1">✉</button>`
+        : `<button class="icon ${viewing === imgKey ? "active" : ""}" data-view-img="${r.image_id}" data-name="${esc(r.image_name)}" title="查看原截图" tabindex="-1">🖼</button>`}</td>
       <td><button class="secondary" data-del="${r.id}" tabindex="-1">删除</button></td></tr>`;
   }).join("");
   const n = records.filter(r => r.checked).length;
@@ -997,7 +1080,7 @@ async function saveDraft(r, fields) {
   try {
     await api(`/api/pending/${r.id}`, send("PATCH", fields));
   } catch (e) {
-    flash("status", "保存修改失败：" + e.message);
+    pflash("保存修改失败：" + e.message);
   }
 }
 
@@ -1021,11 +1104,11 @@ $("rows").addEventListener("change", e => {
     const parsed = parseDate(e.target.value);
     if (!parsed) {
       e.target.classList.add("invalid");
-      flash("status", `日期格式不对：「${e.target.value}」，应为 2026/10/29 22:12:00`);
+      pflash(`日期格式不对：「${e.target.value}」，应为 2026/10/29 22:12:00`);
       return;
     }
     Object.assign(r, parsed, { year_guessed: false }); // user has checked this date
-    flash("status", "");
+    pflash("");
     saveDraft(r, { date: r.date });
     sortRecords();
     renderPending();
@@ -1049,6 +1132,8 @@ $("rows").addEventListener("focusin", e => { if (e.target.dataset.k) e.target.se
 $("rows").addEventListener("click", e => {
   const img = e.target.closest("[data-view-img]");
   if (img) return toggleServerImage(+img.dataset.viewImg, img.dataset.name);
+  const mail = e.target.closest("[data-view-mail]");
+  if (mail) return toggleEmail(+mail.dataset.viewMail, mail.dataset.name);
   const id = e.target.dataset.del;
   if (id !== undefined) deletePending([+id]);
 });
@@ -1061,7 +1146,7 @@ async function deletePending(ids) {
     renderPending();
     loadCounts();
   } catch (e) {
-    flash("status", "删除失败：" + e.message);
+    pflash("删除失败：" + e.message);
   }
 }
 $("delete-checked").onclick = () => {
@@ -1080,10 +1165,10 @@ $("confirm").onclick = async () => {
       id: r.id, date: r.date, account: r.account, currency: r.currency, amount: r.amount,
       category: r.category, description: r.merchant,
     })) }));
-    flash("status", `已入库 ${confirmed} 条`);
+    pflash(`已入库 ${confirmed} 条`);
     await loadPending();
   } catch (e) {
-    flash("status", "提交失败：" + e.message);
+    pflash("提交失败：" + e.message);
     renderPending();
   }
 };
@@ -1096,6 +1181,7 @@ function clearSession() {
   images = [];
   showImage(null);
   flash("status", "");
+  flash("e-status", "");
   renderPending();
 }
 
@@ -1118,23 +1204,44 @@ function removeImage(key) {
   if (viewing === key) showImage(null);
   else renderThumbs();
 }
-// im: { key, name, url } or null to close
+// im: { key, name, url } for a screenshot, { key, name, text } for an email, or null to close
 function showImage(im) {
   viewing = im ? im.key : null;
   document.body.classList.toggle("viewing", !!im);
   if (im) {
-    $("viewer-img").src = im.url;
-    $("viewer-img").alt = im.name;
+    const isText = im.text != null;
+    $("viewer-img").hidden = isText;
+    $("viewer-text").hidden = !isText;
+    if (isText) {
+      $("viewer-text").textContent = im.text;
+      $("viewer-img").removeAttribute("src");
+    } else {
+      $("viewer-img").src = im.url;
+      $("viewer-img").alt = im.name;
+    }
     $("viewer-name").textContent = im.name;
     $("viewer").scrollTop = 0;
   }
   renderThumbs();
   for (const b of document.querySelectorAll("[data-view-img]")) b.classList.toggle("active", viewing === "srv-" + b.dataset.viewImg);
+  for (const b of document.querySelectorAll("[data-view-mail]")) b.classList.toggle("active", viewing === "mail-" + b.dataset.viewMail);
   for (const tr of document.querySelectorAll("tr[data-img-id]")) tr.classList.toggle("viewing", viewing === "srv-" + tr.dataset.imgId);
+  for (const tr of document.querySelectorAll("tr[data-mail-id]")) tr.classList.toggle("viewing", viewing === "mail-" + tr.dataset.mailId);
 }
 function toggleServerImage(id, name) {
   const key = "srv-" + id;
   showImage(viewing === key ? null : { key, name: name || `截图 #${id}`, url: `/api/images/${id}` });
+}
+async function toggleEmail(id, name) {
+  const key = "mail-" + id;
+  if (viewing === key) return showImage(null);
+  try {
+    const m = await api(`/api/emails/${id}`);
+    showImage({ key, name: m.subject || name || `邮件 #${id}`,
+                text: `发件人：${m.sender}\n收到：${fmtTime(m.received_at)}\n\n${m.body}` });
+  } catch (e) {
+    alert("打不开这封邮件：" + e.message);
+  }
 }
 $("thumbs").addEventListener("click", e => {
   const del = e.target.closest("[data-img-del]")?.dataset.imgDel;
@@ -1148,7 +1255,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape" && viewing) s
 // ---------- transactions ----------
 
 for (const p of ["tx", "ex"]) {
-  $(p + "-source").innerHTML = `<option value="">全部</option><option value="manual">手动输入</option>` +
+  $(p + "-source").innerHTML = `<option value="">全部</option><option value="manual">手动输入</option><option value="email">邮件导入</option>` +
     `<optgroup label="截图识别">` +
     Object.entries(SOURCE_LABELS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("") + `</optgroup>`;
 }
@@ -1189,8 +1296,9 @@ async function loadTransactions() {
     return flash("tx-status", "读取失败：" + e.message);
   }
   $("tx-rows").innerHTML = txRows.map(t => {
-    const shot = t.image_id != null; // manual rows have no screenshot to show
-    return `<tr class="${shot ? "clickable" : ""}" ${shot ? `data-img-id="${t.image_id}" data-name="${esc(t.image_name)}" title="点击查看原截图"` : ""}>
+    const shot = t.image_id != null, mail = t.email_id != null; // manual rows have nothing to show
+    return `<tr class="${shot || mail ? "clickable" : ""}" ${shot ? `data-img-id="${t.image_id}" data-name="${esc(t.image_name)}" title="点击查看原截图"` : ""}` +
+      ` ${mail ? `data-mail-id="${t.email_id}" title="点击查看原邮件"` : ""}>
     <td>${esc(t.date)}</td><td>${esc(t.weekday)}</td><td>${esc(t.account)}</td><td>${esc(t.currency)}</td>
     <td class="num">${fmtAmount(t.amount)}</td>
     <td><input data-tx="${t.id}" data-k="category" value="${esc(t.category)}" list="m-categories"></td>
@@ -1242,7 +1350,9 @@ $("tx-rows").addEventListener("keydown", e => {
 $("tx-rows").addEventListener("click", e => {
   if (e.target.closest("input")) return;
   const tr = e.target.closest("tr[data-img-id]");
-  if (tr) toggleServerImage(+tr.dataset.imgId, tr.dataset.name);
+  if (tr) return toggleServerImage(+tr.dataset.imgId, tr.dataset.name);
+  const mailTr = e.target.closest("tr[data-mail-id]");
+  if (mailTr) toggleEmail(+mailTr.dataset.mailId);
 });
 
 // ---------- monthly report ----------
@@ -1564,7 +1674,7 @@ $("view-settings").addEventListener("keydown", e => {
 });
 
 // One tab at a time, remembered
-const SET_TABS = ["accounts", "currencies", "categories", "opening", "rates"];
+const SET_TABS = ["accounts", "currencies", "categories", "opening", "rates", "email"];
 function showSetTab(tab) {
   if (!SET_TABS.includes(tab)) tab = "accounts";
   save("tx.settings.tab", tab);
@@ -1673,6 +1783,207 @@ $("fx-rows").addEventListener("keydown", e => {
   if (next) next.focus(); else e.target.blur();
 });
 $("fx-rows").addEventListener("focusin", e => { if (e.target.dataset.fx) e.target.select(); });
+
+// ---------- add: email import ----------
+
+let emailCfg = null;
+const daysAgo = n => { const d = new Date(); d.setDate(d.getDate() - n); return ymd(d); };
+async function loadEmailState() {
+  try { emailCfg = await api("/api/email"); } catch (e) { return flash("e-status", "读取邮件设置失败：" + e.message); }
+  const missing = [!emailCfg.connected && "连接 Outlook", !emailCfg.rules.length && "添加邮件规则"].filter(Boolean);
+  $("e-setup").hidden = !missing.length;
+  $("e-setup").innerHTML = missing.length ? `还要先到「<a href="#settings-email">设置 › 邮件</a>」${missing.join("、")}。` : "";
+  $("e-fetch").disabled = missing.length > 0;
+  $("e-last").textContent = emailCfg.last_fetch ? `上次更新到 ${fmtTime(emailCfg.last_fetch)}，这次读这之后收到的邮件` : "还没有从邮件更新过";
+  $("e-start-field").hidden = !!emailCfg.last_fetch;
+  if (!emailCfg.last_fetch && !$("e-start").value) {
+    // The first update starts at the start month of the opening balances, else 30 days back
+    try {
+      const { start_month } = await api("/api/opening");
+      $("e-start").value = start_month ? `${start_month}-01` : daysAgo(30);
+    } catch { $("e-start").value = daysAgo(30); }
+  }
+  loadUnrecognized();
+}
+async function loadUnrecognized() {
+  let emails;
+  try { ({ emails } = await api("/api/email/unrecognized")); } catch { return; }
+  $("e-failed").hidden = !emails.length;
+  $("e-failed").querySelector("summary").textContent = `没认出来的邮件 ${emails.length} 封`;
+  $("e-failed-rows").innerHTML = emails.map(m => `<tr>
+    <td>${esc(fmtTime(m.received_at))}</td><td class="wrap">${esc(m.subject)}</td><td class="wrap">${esc(m.problem ?? "现在能认出来了，点下面的按钮")}</td>
+    <td><button class="icon" data-view-mail="${m.email_id}" data-name="${esc(m.subject)}" title="查看原邮件">✉</button></td></tr>`).join("");
+}
+$("e-failed-rows").addEventListener("click", e => {
+  const b = e.target.closest("[data-view-mail]");
+  if (b) toggleEmail(+b.dataset.viewMail, b.dataset.name);
+});
+$("e-fetch").onclick = async () => {
+  $("e-fetch").disabled = true;
+  flash("e-status", "正在读取邮件…");
+  try {
+    const start = emailCfg?.last_fetch ? null : $("e-start").value || null;
+    const data = await api("/api/email/fetch", send("POST", { start }));
+    const c = data.counts;
+    flash("e-status", `${fmtTime(data.since)} 到现在收到 ${c.read} 封邮件，符合规则的 ${c.matched} 封：新增 ${c.new} 条` +
+      (c.seen ? `，${c.seen} 封以前读过（跳过）` : "") + (c.failed ? `，${c.failed} 封没认出来（见下面）` : ""));
+    setPending(data.pending);
+    loadCounts();
+  } catch (e) {
+    flash("e-status", "更新失败：" + e.message);
+  }
+  loadEmailState();
+};
+$("e-retry").onclick = async () => {
+  $("e-retry").disabled = true;
+  try {
+    const data = await api("/api/email/retry", { method: "POST" });
+    flash("e-status", `重新识别：新增 ${data.new} 条` + (data.failed ? `，还有 ${data.failed} 封认不出来` : ""));
+    setPending(data.pending);
+  } catch (e) {
+    flash("e-status", "重新识别失败：" + e.message);
+  }
+  $("e-retry").disabled = false;
+  loadUnrecognized();
+};
+
+// ---------- settings: email ----------
+
+const RULE_LABELS = { account: "账户", currency: "币种", category: "种类", sender: "发件人", subject: "标题包含",
+                      date_re: "日期（正则）", merchant_re: "描述（正则）", amount_re: "金额（正则）" };
+// A new rule starts with the patterns of a typical Japanese card notice
+const NEW_RULE = { account: "", currency: "日元", category: "饮食费", sender: "", subject: "",
+                   date_re: String.raw`利用日時\s+([0-9/:\s]+)`, merchant_re: String.raw`利用店舗\s+([^\n]+)`,
+                   amount_re: String.raw`利用金額\s+([0-9,]+)円` };
+let emailRules = [];
+let draftRule = null; // the rule being added, not saved yet
+async function loadEmailSettings() {
+  let cfg;
+  try { cfg = await api("/api/email"); } catch (e) { return flash("em-status", "读取失败：" + e.message); }
+  $("em-redirect").textContent = cfg.default_redirect_uri;
+  if (document.activeElement !== $("em-redirect-uri")) $("em-redirect-uri").value = cfg.redirect_uri;
+  $("em-redirect-uri").placeholder = cfg.default_redirect_uri;
+  if (document.activeElement !== $("em-client-id")) $("em-client-id").value = cfg.client_id;
+  $("em-secret").value = "";
+  $("em-secret").placeholder = cfg.has_secret ? "已保存（不显示）；要换就填新的" : "";
+  $("em-connect").textContent = cfg.connected ? "重新连接" : "连接 Outlook";
+  $("em-connect").disabled = $("em-save-token").disabled = !cfg.client_id || !cfg.has_secret;
+  $("em-disconnect").hidden = !cfg.connected;
+  if (!$("em-conn").dataset.msg) $("em-conn").textContent = cfg.connected ? "✓ 已连接" : (cfg.client_id && cfg.has_secret ? "还没连接" : "先填 Client ID 和 Client secret");
+  emailRules = cfg.rules;
+  renderRules();
+}
+function ruleFields(r, key) {
+  const input = (k, extra = "") => `<label>${RULE_LABELS[k]}<input data-rule="${key}" data-k="${k}" value="${esc(r[k])}" spellcheck="false" ${extra}></label>`;
+  return `<div class="settings">${input("account", 'list="m-accounts"')}${input("currency")}${input("category", 'list="m-categories"')}` +
+    `${input("sender", 'placeholder="notice@example.com 或 @example.com"')}${input("subject", 'placeholder="空着表示不限"')}</div>` +
+    `<div class="patterns">${input("date_re")}${input("merchant_re")}${input("amount_re")}</div>`;
+}
+function renderRules() {
+  $("em-rules").innerHTML = emailRules.map((r, i) => `<div class="rule">
+      ${ruleFields(r, r.id)}
+      <div class="bar"><span class="status">规则 ${i + 1} · 已读 ${r.emails} 封邮件</span>
+        <button class="danger" data-rule-del="${r.id}">删除规则</button></div></div>`).join("") +
+    (draftRule ? `<div class="rule draft">${ruleFields(draftRule, "new")}
+      <div class="bar"><button data-rule-save>保存规则</button><button class="secondary" data-rule-cancel>取消</button></div></div>` : "") ||
+    `<div class="empty">还没有规则</div>`;
+  $("em-add-rule").hidden = !!draftRule;
+  const keep = $("em-test-rule").value;
+  $("em-test-rule").innerHTML = emailRules.map((r, i) => `<option value="${r.id}">规则 ${i + 1}：${esc(r.sender)}</option>`).join("") +
+    (draftRule ? `<option value="new">新规则（未保存）</option>` : "");
+  if ([...$("em-test-rule").options].some(o => o.value === keep)) $("em-test-rule").value = keep;
+}
+$("em-save-cred").onclick = async () => {
+  const secret = $("em-secret").value.trim();
+  try {
+    await api("/api/email/credentials", send("PUT", { client_id: $("em-client-id").value.trim(), client_secret: secret || null,
+                                                       redirect_uri: $("em-redirect-uri").value.trim() }));
+    flash("em-status", "");
+    $("em-conn").dataset.msg = "";
+    $("em-conn").textContent = "已保存";
+  } catch (e) { $("em-conn").textContent = "保存失败：" + e.message; }
+  loadEmailSettings();
+};
+$("em-connect").onclick = () => { location.href = "/api/email/authorize"; };
+$("em-save-token").onclick = async () => {
+  $("em-save-token").disabled = true;
+  try {
+    await api("/api/email/token", send("PUT", { refresh_token: $("em-token").value }));
+    $("em-token").value = "";
+    $("em-conn").dataset.msg = "1";
+    $("em-conn").textContent = "✓ token 能用，已连接";
+  } catch (e) {
+    $("em-conn").dataset.msg = "1";
+    $("em-conn").textContent = "token 不能用：" + e.message;
+  }
+  $("em-save-token").disabled = false;
+  loadEmailSettings();
+};
+$("em-disconnect").onclick = async () => {
+  if (!confirm("断开 Outlook？之后要重新登录才能读邮件。已经读到的邮件和交易不受影响。")) return;
+  await api("/api/email/disconnect", { method: "POST" }).catch(() => {});
+  $("em-conn").dataset.msg = "";
+  loadEmailSettings();
+};
+$("em-add-rule").onclick = () => { draftRule = { ...NEW_RULE }; renderRules(); $("em-rules").querySelector('[data-rule="new"][data-k="account"]')?.focus(); };
+$("em-rules").addEventListener("input", e => {
+  const { rule, k } = e.target.dataset;
+  if (rule === "new" && draftRule) draftRule[k] = e.target.value;
+});
+$("em-rules").addEventListener("change", async e => {
+  const { rule, k } = e.target.dataset;
+  if (!rule || rule === "new") return;
+  const r = emailRules.find(x => x.id === +rule);
+  try {
+    await api(`/api/email/rules/${rule}`, send("PATCH", { [k]: e.target.value }));
+    r[k] = e.target.value.trim();
+    e.target.classList.remove("invalid");
+    flash("em-status", `已保存${RULE_LABELS[k]}`);
+  } catch (err) {
+    e.target.classList.add("invalid");
+    flash("em-status", "没有保存：" + err.message);
+  }
+});
+$("em-rules").addEventListener("click", async e => {
+  if (e.target.matches("[data-rule-cancel]")) { draftRule = null; renderRules(); return; }
+  if (e.target.matches("[data-rule-save]")) {
+    try {
+      await api("/api/email/rules", send("POST", draftRule));
+      draftRule = null;
+      flash("em-status", "已添加规则");
+      loadEmailSettings();
+    } catch (err) { flash("em-status", "没有保存：" + err.message); }
+    return;
+  }
+  const del = e.target.dataset.ruleDel;
+  if (del && confirm("删除这条规则？已经读到的邮件和交易不受影响，以后不再读这种邮件。")) {
+    try { await api(`/api/email/rules/${del}`, { method: "DELETE" }); flash("em-status", "已删除规则"); }
+    catch (err) { flash("em-status", "删除失败：" + err.message); }
+    loadEmailSettings();
+  }
+});
+$("em-test").onclick = async () => {
+  const key = $("em-test-rule").value;
+  if (!key) return flash("em-test-result", "先添加一条规则");
+  // The regexes as they are in the inputs now, saved or not
+  const fields = {};
+  for (const k of ["date_re", "merchant_re", "amount_re"])
+    fields[k] = $("em-rules").querySelector(`[data-rule="${key}"][data-k="${k}"]`)?.value ?? "";
+  try {
+    const { row, problem } = await api("/api/email/test", send("POST", { ...fields, text: $("em-test-text").value }));
+    flash("em-test-result", row ? `✓ ${row.date}　${fmtAmount(row.amount)}　${row.merchant}` : `✗ ${problem}`);
+  } catch (e) { flash("em-test-result", "✗ " + e.message); }
+};
+// Coming back from Microsoft's sign-in page
+{
+  const q = new URLSearchParams(location.search);
+  const msg = q.has("email_connected") ? "✓ 已连接 Outlook" : q.get("email_error");
+  if (msg) {
+    $("em-conn").textContent = msg;
+    $("em-conn").dataset.msg = "1";
+    history.replaceState(null, "", location.pathname + location.hash);
+  }
+}
 
 // ---------- security ----------
 

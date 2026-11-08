@@ -1,4 +1,7 @@
-"""Everything the web app does with the database: recognize, review, confirm, export."""
+"""Everything the web app does with the database: recognize, review, confirm, export.
+
+Pending rows come from screenshots (recognize) or emails (txreader/mail.py, source 'email');
+both are reviewed and confirmed the same way."""
 import json
 import re
 import threading
@@ -107,6 +110,7 @@ def _pending_row(r) -> dict:
     date = draft.get("date", r["date"])
     out = {
         "id": r["id"], "image_id": r["image_id"], "image_name": r["image_name"],
+        "email_id": r["email_id"], "email_subject": r["email_subject"],
         "date": date, "weekday": _weekday(date),
         "amount": draft.get("amount", r["amount"]),
         "merchant": draft.get("merchant", r["merchant"]),
@@ -128,8 +132,10 @@ def list_pending(source: str) -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
             "SELECT r.*, s.id AS s_id, s.date AS s_date, s.amount AS s_amount,"
-            " s.merchant AS s_merchant, s.status AS s_status, i.filename AS image_name"
-            " FROM ocr_rows r JOIN images i ON i.id = r.image_id"
+            " s.merchant AS s_merchant, s.status AS s_status, i.filename AS image_name,"
+            " e.subject AS email_subject"
+            " FROM ocr_rows r LEFT JOIN images i ON i.id = r.image_id"
+            " LEFT JOIN emails e ON e.id = r.email_id"
             " LEFT JOIN ocr_rows s ON s.id = r.suspect_of"
             " WHERE r.source = ? AND r.status = 'pending'"
             " ORDER BY r.date, r.image_id, r.pos DESC",  # apps list newest first
@@ -191,14 +197,15 @@ def confirm(rows: list[dict]) -> int:
         for row in rows:
             date = _check_date(row.get("date"))
             amount = round(float(row["amount"]), 2)
-            r = conn.execute("SELECT id FROM ocr_rows WHERE id = ? AND status = 'pending'", (row["id"],)).fetchone()
+            r = conn.execute("SELECT id, source FROM ocr_rows WHERE id = ? AND status = 'pending'",
+                             (row["id"],)).fetchone()
             if not r:
                 raise NotFound(row["id"])
             t = now()
             conn.execute(
-                "INSERT INTO transactions (ocr_row_id, date, weekday, account, currency, amount, category,"
-                " description, confirmed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (row["id"], date, _weekday(date), str(row.get("account", "")), str(row.get("currency", "")),
+                "INSERT INTO transactions (origin, ocr_row_id, date, weekday, account, currency, amount, category,"
+                " description, confirmed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("email" if r["source"] == "email" else "screenshot", row["id"], date, _weekday(date), str(row.get("account", "")), str(row.get("currency", "")),
                  amount, str(row.get("category", "")), str(row.get("description", "")), t, t))
             conn.execute("UPDATE ocr_rows SET status = 'confirmed' WHERE id = ?", (row["id"],))
         register_accounts(conn, [(r.get("account"), r.get("currency")) for r in rows],
@@ -211,7 +218,7 @@ def confirm(rows: list[dict]) -> int:
 def list_transactions(source: str | None = None, date_from: str | None = None,
                       date_to: str | None = None, account: str | None = None,
                       currency: str | None = None, category: str | None = None) -> list[dict]:
-    """source is a screenshot source key, or "manual" for rows typed in by hand.
+    """source is a screenshot source key, "email", or "manual" for rows typed in by hand.
     date_from / date_to are inclusive, as 2026-10-01 or 2026/10/01.
     account / currency / category match the name exactly."""
     where, args = [], []
@@ -232,7 +239,7 @@ def list_transactions(source: str | None = None, date_from: str | None = None,
         args.append(date_to.replace("-", "/"))
     with connect() as conn:
         rows = conn.execute(
-            "SELECT t.*, r.source, r.image_id, i.filename AS image_name,"
+            "SELECT t.*, r.source, r.image_id, r.email_id, i.filename AS image_name,"
             " COUNT(e.id) AS export_count, MAX(e.at) AS last_export"
             " FROM transactions t LEFT JOIN ocr_rows r ON r.id = t.ocr_row_id"
             " LEFT JOIN images i ON i.id = r.image_id"
