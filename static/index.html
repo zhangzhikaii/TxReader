@@ -157,6 +157,18 @@
   .delta .chg.flat, .delta .chg.na { color:var(--muted); background:#f3f4f6; font-weight:500; }
   .delta .pct { font-weight:500; opacity:.85; }
   .delta .vs { font-size:12px; color:var(--muted); padding-left:2px; }
+  /* Monthly report */
+  .parts { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .part { font-size:13px; color:var(--muted); background:#f3f4f6; border-radius:999px; padding:2px 10px; font-variant-numeric:tabular-nums; }
+  .part b { color:var(--text); font-weight:600; }
+  .check { font-size:13px; border-radius:999px; padding:2px 10px; }
+  .check.ok { color:#15803d; background:#dcfce7; }
+  .check.diff { color:#b91c1c; background:#fee2e2; }
+  .month-bar .toggle { flex-direction:row; align-items:center; gap:6px; color:var(--text); font-size:14px; }
+  .month-bar .toggle:first-of-type { margin-left:auto; }
+  .month-bar .toggle select { padding:4px 6px; }
+  table.sheet td .count { font-size:12px; color:var(--muted); margin-left:6px; }
+  table.sheet td.blank { color:var(--line); }
   .warn-box { background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:10px 12px; font-size:14px; margin-bottom:12px; }
   /* Confirmation before storing manual rows */
   dialog { border:0; border-radius:12px; padding:20px; width:min(860px, calc(100vw - 32px)); max-height:calc(100vh - 48px);
@@ -176,6 +188,7 @@
     <nav>
       <a href="#add" data-view="add">记一笔</a>
       <a href="#transactions" data-view="transactions">交易</a>
+      <a href="#monthly" data-view="monthly">收支</a>
       <a href="#balances" data-view="balances">结余</a>
       <a href="#export" data-view="export">导出</a>
       <a href="#settings" data-view="settings">设置</a>
@@ -308,6 +321,33 @@
       </div>
       <div class="bar"><span id="tx-status" class="status"></span></div>
       <div class="legend">截图识别的交易点一行可以查看原截图。入库后只能修改种类和描述，改完自动保存</div>
+    </div>
+  </section>
+
+  <!-- ===== 收支 ===== -->
+  <section id="view-monthly" hidden>
+    <div class="card month-bar">
+      <button class="secondary" id="mo-prev" title="上个月">‹</button>
+      <select id="mo-month" aria-label="月份"></select>
+      <button class="secondary" id="mo-next" title="下个月">›</button>
+      <span id="mo-status" class="status"></span>
+      <label class="toggle">排序<select id="mo-sort">
+        <option value="list">设置页顺序</option>
+        <option value="spend">支出最多的在前</option>
+        <option value="count">笔数最多的在前</option>
+      </select></label>
+      <label class="toggle"><input type="checkbox" id="mo-hide-empty" checked>只显示有收支的种类</label>
+    </div>
+    <div id="mo-warn"></div>
+    <div id="mo-hero"></div>
+    <div class="card" id="mo-card" hidden>
+      <h2 id="mo-title"></h2>
+      <div class="table-wrap"><table class="sheet">
+        <thead id="mo-head"></thead>
+        <tbody id="mo-rows"></tbody>
+        <tbody id="mo-foot" class="foot"></tbody>
+      </table></div>
+      <div class="legend">收入为正、支出为负。各币种是原币的合计（不涉及汇率），最右一列按本月汇率折算。汇差盈亏 = 上月底存量 ×（本月汇率 − 上月汇率），和结余页同一个算法；人民币合计 = 折算 + 汇差，应等于结余页的月度差额</div>
     </div>
   </section>
 
@@ -523,7 +563,7 @@ function flash(el, msg) { $(el).textContent = msg; }
 
 // ---------- views ----------
 
-const VIEWS = ["add", "transactions", "balances", "export", "settings", "security"];
+const VIEWS = ["add", "transactions", "monthly", "balances", "export", "settings", "security"];
 function route() {
   let view = location.hash.slice(1);
   if (view === "recognize") { view = "add"; showMethod("screenshot"); } // old bookmark
@@ -541,6 +581,7 @@ function route() {
   if (view === "export") { loadExportRows(); loadExportHistory(); }
   if (view === "settings") { loadSettings(); loadRates(); }
   if (view === "balances") loadBalances($("bal-month").value || null);
+  if (view === "monthly") loadMonthly($("mo-month").value || null);
   if (view === "security") loadSecurity();
 }
 window.addEventListener("hashchange", route);
@@ -1203,6 +1244,77 @@ $("tx-rows").addEventListener("click", e => {
   const tr = e.target.closest("tr[data-img-id]");
   if (tr) toggleServerImage(+tr.dataset.imgId, tr.dataset.name);
 });
+
+// ---------- monthly report ----------
+
+let mo = null;
+const signed = v => (v > 0 ? "+" : "") + fmtAmount(v);
+{
+  const v = load("tx.monthly.hideEmpty");
+  if (v !== null) $("mo-hide-empty").checked = v === "1";
+  const sort = load("tx.monthly.sort");
+  if (["list", "spend", "count"].includes(sort)) $("mo-sort").value = sort;
+}
+// Category order: as in settings (the server's order), biggest spending first (by the converted
+// total; ones that can't be converted go last), or most transactions first. Ties keep list order.
+function sortCategories(rows) {
+  const by = $("mo-sort").value;
+  if (by === "list") return rows;
+  const key = by === "count" ? r => -r.count : r => r.converted ?? Infinity;
+  return rows.map((r, i) => [r, i]).sort((a, b) => (key(a[0]) - key(b[0])) || (a[1] - b[1])).map(x => x[0]);
+}
+async function loadMonthly(month) {
+  try { mo = await api("/api/monthly" + (month ? "?month=" + month : "")); }
+  catch (e) { return flash("mo-status", "读取失败：" + e.message); }
+  flash("mo-status", "");
+  $("mo-month").innerHTML = mo.months.map(m => `<option value="${m}" ${m === mo.month ? "selected" : ""}>${fmtMonth(m)}</option>`).join("");
+  const i = mo.months.indexOf(mo.month);
+  $("mo-prev").disabled = i === mo.months.length - 1;
+  $("mo-next").disabled = i <= 0;
+  renderMonthly();
+}
+function renderMonthly() {
+  const cur = mo.currencies, base = mo.base ?? "本位币";
+  // Columns: currencies with something this month, or an FX gain
+  const cols = cur.filter(c => mo.totals[c] || mo.categories.some(r => c in r.amounts) || (mo.fx_gain?.[c] ?? 0) !== 0 || c === mo.base);
+  const noRate = cols.filter(c => mo.rates[c] == null && mo.totals[c]);
+  $("mo-warn").innerHTML =
+    (noRate.length ? `<div class="warn-box">${fmtMonth(mo.month)}还没填 ${noRate.map(esc).join("、")} 的汇率，折算不出来。去「<a href="#rates">设置 › 月汇率</a>」填上。</div>` : "") +
+    (mo.check === "diff" ? `<div class="warn-box">和结余页对不上：这里的${esc(base)}合计是 ${fmtAmount(mo.base_grand_total)}，结余页的月度差额是 ${fmtAmount(mo.balance_change)}。可能是期初余额或某个月的汇率有问题。</div>` : "");
+
+  // The card: this month in the base currency = income/expense converted + FX gain
+  const total = mo.base_grand_total ?? (mo.fx_gain ? null : mo.converted_total);
+  const parts = [`<span class="part">收支 <b>${mo.converted_total == null ? "缺汇率" : signed(mo.converted_total)}</b></span>`,
+    `<span class="part">汇差 <b>${mo.fx_gain ? (mo.fx_gain_total == null ? "缺汇率" : signed(mo.fx_gain_total)) : "—"}</b></span>`];
+  if (mo.check === "ok") parts.push(`<span class="check ok">✓ 勾稽无误</span>`);
+  if (mo.check === "diff") parts.push(`<span class="check diff">⚠ 勾稽有误，差额： ${fmtAmount(mo.base_grand_total - mo.balance_change)}</span>`);
+  $("mo-hero").innerHTML = `<div class="hero">
+    <div class="label">${esc(base)}合计 · ${fmtMonth(mo.month)}${mo.fx_note ? `<span class="muted">（${esc(mo.fx_note)}）</span>` : ""}</div>
+    <div class="row">
+      ${total == null ? `<span class="missing">缺汇率，算不出来</span>`
+                      : `<span class="total ${total < 0 ? "neg" : ""}">${signed(total)}<span class="unit">${esc(base)}</span></span>`}
+      <span class="parts">${parts.join("")}</span>
+    </div></div>`;
+
+  $("mo-card").hidden = false;
+  $("mo-title").textContent = `${fmtMonth(mo.month)} 收支`;
+  $("mo-head").innerHTML = `<tr><th>种类</th>${cols.map(c => `<th class="num">${esc(c)}</th>`).join("")}<th class="num">合计（${esc(base)}）</th></tr>`;
+  const rows = sortCategories($("mo-hide-empty").checked ? mo.categories.filter(r => r.count) : mo.categories);
+  $("mo-rows").innerHTML = rows.map(r => `<tr><td>${esc(r.name)}${r.count ? `<span class="count">${r.count} 笔</span>` : ""}</td>` +
+    cols.map(c => c in r.amounts ? moneyCell(r.amounts[c]) : `<td class="num blank">·</td>`).join("") +
+    (Object.keys(r.amounts).length ? moneyCell(r.converted) : `<td class="num blank">·</td>`) + `</tr>`).join("") ||
+    `<tr><td colspan="${cols.length + 2}" class="empty">这个月没有交易</td></tr>`;
+  const fx = c => mo.fx_gain ? (c === mo.base ? `<td class="none">—</td>` : moneyCell(mo.fx_gain[c])) : `<td class="none">—</td>`;
+  $("mo-foot").innerHTML =
+    `<tr class="strong"><td>本位币合计</td>${cols.map(c => moneyCell(mo.totals[c])).join("")}${moneyCell(mo.converted_total)}</tr>` +
+    `<tr><td>汇差盈亏</td>${cols.map(fx).join("")}${mo.fx_gain ? moneyCell(mo.fx_gain_total) : `<td class="none">—</td>`}</tr>` +
+    `<tr class="strong"><td>${esc(base)}合计</td>${cols.map(c => moneyCell(mo.base_total[c])).join("")}${total == null ? `<td class="missing">缺汇率</td>` : moneyCell(total)}</tr>`;
+}
+$("mo-month").addEventListener("change", e => loadMonthly(e.target.value));
+$("mo-prev").onclick = () => loadMonthly(mo.months[mo.months.indexOf(mo.month) + 1]);
+$("mo-next").onclick = () => loadMonthly(mo.months[mo.months.indexOf(mo.month) - 1]);
+$("mo-hide-empty").addEventListener("change", e => { save("tx.monthly.hideEmpty", e.target.checked ? "1" : "0"); if (mo) renderMonthly(); });
+$("mo-sort").addEventListener("change", e => { save("tx.monthly.sort", e.target.value); if (mo) renderMonthly(); });
 
 // ---------- balance sheet ----------
 

@@ -423,3 +423,49 @@ def test_transaction_filters(client):
     assert get("currency=人民币") == [("微信", "饮食费")]
     assert get("category=交通费") == [("现金", "交通费")]
     assert get("account=现金&category=饮食费&date_from=2026-10-01&date_to=2026-10-31") == [("现金", "饮食费")]
+
+
+def test_monthly_report(client):
+    from datetime import date
+    from txreader import books
+    tx = lambda date_, account, currency, amount, category: {
+        "date": date_, "account": account, "currency": currency, "amount": amount, "category": category,
+        "description": ""}
+    client.post("/api/transactions", json={"add_accounts": True, "rows": [
+        tx("2026/09/20 10:00:00", "现金", "日元", -300, "饮食费"),
+        tx("2026/10/05 10:00:00", "现金", "日元", -1000, "饮食费"),
+        tx("2026/10/06 10:00:00", "某银行", "人民币", 0.5, "红包"),
+        # An internal transfer in one currency nets to zero
+        tx("2026/10/07 10:00:00", "某银行", "人民币", -100, "内部转账"),
+        tx("2026/10/07 10:00:00", "现金", "人民币", 100, "内部转账"),
+    ]})
+    ids = {a["name"]: a["id"] for a in client.get("/api/settings").json()["accounts"]}
+
+    # Without a start month there is no FX gain, but the flows are there
+    m = books.monthly("2026-10", today=date(2026, 10, 20))
+    assert m["months"] == ["2026-10", "2026-09"]
+    assert m["fx_gain"] is None and "起始月" in m["fx_note"] and m["check"] is None
+
+    client.put("/api/opening/start-month", json={"month": "2026-09"})
+    client.put(f"/api/opening/{ids['现金']}/日元", json={"amount": 10000})
+    client.put(f"/api/opening/{ids['某银行']}/人民币", json={"amount": 400})
+    client.put("/api/rates/2026-09/日元", json={"rate": 0.04})
+    client.put("/api/rates/2026-10/日元", json={"rate": 0.05})
+
+    m = books.monthly("2026-10", today=date(2026, 10, 20))
+    assert m["currencies"] == ["日元", "人民币"]
+    assert [(c["name"], c["amounts"], c["converted"], c["count"]) for c in m["categories"]] == [
+        ("饮食费", {"日元": -1000}, -50, 1), ("红包", {"人民币": 0.5}, 0.5, 1), ("内部转账", {"人民币": 0}, 0, 2)]
+    assert m["totals"] == {"日元": -1000, "人民币": 0.5}
+    assert (m["converted"], m["converted_total"]) == ({"日元": -50, "人民币": 0.5}, -49.5)
+    assert (m["fx_gain"], m["fx_gain_total"]) == ({"日元": 100, "人民币": 0}, 100)  # 10,000 x (0.05 - 0.04)
+    assert (m["base_total"], m["base_grand_total"]) == ({"日元": 50, "人民币": 0.5}, 50.5)
+    # The two reports agree: converted flows + FX gain = the balance sheet's change
+    assert m["balance_change"] == 50.5 and m["check"] == "ok"
+
+    sep = client.get("/api/monthly?month=2026-09").json()
+    assert sep["categories"][0]["amounts"] == {"日元": -300}
+    assert sep["fx_gain"] is None and sep["check"] is None
+    nov = client.get("/api/monthly?month=2026-11").json()  # no rate yet
+    assert nov["converted_total"] == 0 and nov["fx_gain"]["日元"] is None and nov["base_grand_total"] is None
+    assert client.get("/api/monthly?month=2026-1").status_code == 400

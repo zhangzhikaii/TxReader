@@ -279,6 +279,15 @@ def balance_sheet(month: str | None = None):
         raise HTTPException(400, str(e))
 
 
+@app.get("/api/monthly")
+def monthly_report(month: str | None = None):
+    """One month's income and expense by category and currency, converted, with the FX gain."""
+    try:
+        return books.monthly(month)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 # ---------- settings: account / currency / category lists ----------
 
 @app.exception_handler(lists.NotFound)

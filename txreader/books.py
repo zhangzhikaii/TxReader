@@ -109,12 +109,18 @@ def rates(today: date | None = None) -> dict:
         table: dict[str, dict[str, float]] = {}
         for r in conn.execute("SELECT f.month, c.name, f.rate FROM fx_rates f JOIN currencies c ON c.id = f.currency_id"):
             table.setdefault(r[0], {})[r[1]] = r[2]
-        tx = conn.execute("SELECT MIN(substr(date, 1, 7)), MAX(substr(date, 1, 7)) FROM transactions").fetchone()
-        ends = [m.replace("/", "-") for m in tx if m] + [m for m in [start_month(conn)] if m] + list(table)
-        this = f"{today.year}-{today.month:02d}"
-        months = months_between(min(ends + [this]), max(ends + [this]))
+        months = _all_months(conn, today, extra=list(table))
     return {"base": base[0] if base else None, "currencies": currencies,
             "months": months[::-1], "rates": table}
+
+
+def _all_months(conn, today: date, extra=()) -> list[str]:
+    """Oldest first: from the start month or the first transaction (whichever is earlier) to
+    this month or the last transaction (whichever is later), stretched to cover `extra`."""
+    tx = conn.execute("SELECT MIN(substr(date, 1, 7)), MAX(substr(date, 1, 7)) FROM transactions").fetchone()
+    ends = [m.replace("/", "-") for m in tx if m] + [m for m in [start_month(conn)] if m] + list(extra)
+    this = f"{today.year}-{today.month:02d}"
+    return months_between(min(ends + [this]), max(ends + [this]))
 
 
 def set_rate(month: str, currency: str, rate: float | None) -> None:
@@ -259,3 +265,81 @@ def balances(month: str | None = None, today: date | None = None) -> dict:
             if total is not None and out["prev_total"] is not None:
                 out["change"] = round(total - out["prev_total"], 2)
         return out
+
+
+# ---------- monthly report ----------
+
+def monthly(month: str | None = None, today: date | None = None) -> dict:
+    """Income and expense of one month by category and currency (docs/plan.md, 月度收支):
+
+    {"month", "months" (to choose from, newest first), "base", "currencies": [columns],
+     "categories": [{"name", "amounts": {currency: sum}, "converted": in base or None,
+                     "count": number of transactions}],
+     "totals": {currency: sum}, "converted": {currency: in base or None}, "converted_total",
+     "rates": {currency: rate or None},
+     "fx_gain": {currency: gain or None} or None, "fx_gain_total", "fx_note",
+     "base_total": {currency: converted + fx_gain}, "base_grand_total",
+     "balance_change": the balance sheet's change for the month, "check": "ok" / "diff" / None}
+
+    Sums are in each currency as booked (no rate involved); converted = sum x this month's rate.
+    The FX gain comes from the balance sheet (last month's holding x the rate change), so
+    converted + FX gain should equal the balance sheet's change; "check" says whether it does."""
+    today = today or date.today()
+    with connect() as conn:
+        months = _all_months(conn, today)[::-1]
+        month = _check_month(month) if month else months[0]
+        start = start_month(conn)
+        base = conn.execute("SELECT name FROM currencies WHERE is_base = 1").fetchone()
+        rates = _rates_for(conn, month)
+        flows: dict[str, dict[str, float]] = {}
+        counts: dict[str, int] = {}
+        for r in conn.execute(
+                "SELECT category, currency, SUM(amount), COUNT(*) FROM transactions WHERE substr(date, 1, 7) = ?"
+                " GROUP BY category, currency", (month.replace("-", "/"),)):
+            flows.setdefault(r[0], {})[r[1]] = round(r[2], 2)
+            counts[r[0]] = counts.get(r[0], 0) + r[3]
+        cat_order = [r[0] for r in conn.execute("SELECT name FROM categories ORDER BY sort, id")]
+        cur_order = [r[0] for r in conn.execute("SELECT name FROM currencies ORDER BY sort, id")]
+
+    used = {c for amounts in flows.values() for c in amounts}
+    currencies = cur_order + sorted(used - set(cur_order))
+    names = cat_order + sorted(set(flows) - set(cat_order))
+    conv = lambda c, v: round(v * rates[c], 2) if c in rates else None
+
+    categories = []
+    for name in names:
+        amounts = flows.get(name, {})
+        cells = [conv(c, v) for c, v in amounts.items()]
+        categories.append({"name": name, "amounts": amounts, "count": counts.get(name, 0),
+                           "converted": None if None in cells else round(sum(cells), 2)})
+    totals = {c: round(sum(f.get(c, 0) for f in flows.values()), 2) for c in currencies}
+    converted = {c: conv(c, v) for c, v in totals.items()}
+    out = {"month": month, "months": months, "base": base[0] if base else None, "currencies": currencies,
+           "categories": categories, "totals": totals, "converted": converted,
+           "converted_total": None if any(v is None and totals[c] for c, v in converted.items())
+           else round(sum(v or 0 for v in converted.values()), 2),
+           "rates": {c: rates.get(c) for c in currencies},
+           "fx_gain": None, "fx_gain_total": None, "fx_note": None,
+           "base_total": {}, "base_grand_total": None, "balance_change": None, "check": None}
+
+    # The FX gain needs last month's holdings, so only after the start month
+    if not start:
+        out["fx_note"] = "没有设起始月，算不出汇差（设置 › 期初余额）"
+    elif month <= start:
+        out["fx_note"] = "起始月和之前的月份没有上月结余，算不出汇差"
+    else:
+        sheet = balances(month, today)
+        out["fx_gain"] = {c: sheet["fx_gain"].get(c, 0.0) for c in currencies}
+        out["fx_gain_total"] = sheet["fx_gain_total"]
+        out["balance_change"] = sheet["change"]
+
+    gains = out["fx_gain"] or {}
+    for c in currencies:
+        v, g = converted[c], gains.get(c, 0.0)
+        out["base_total"][c] = None if v is None and totals[c] or g is None else round((v or 0) + g, 2)
+    if all(v is not None for v in out["base_total"].values()):
+        out["base_grand_total"] = round(sum(out["base_total"].values()), 2)
+    if out["base_grand_total"] is not None and out["balance_change"] is not None:
+        # Each cell is rounded on its own, so allow a few cents
+        out["check"] = "ok" if abs(out["base_grand_total"] - out["balance_change"]) < 0.05 else "diff"
+    return out
