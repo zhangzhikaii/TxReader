@@ -107,6 +107,11 @@ function renderList(kind) {
         (live && addable.length ? `<select class="add-cur" data-act="add-cur"><option value="">＋ 币种</option>${addable.map(c => `<option>${esc(c.name)}</option>`).join("")}</select>` : "") + `</td>`;
     }
     if (kind === "currencies") extra = `<td>${it.is_base ? '<span class="tag done">本位币</span>' : ""}</td>`;
+    if (kind === "categories") {
+      const fixed = ed?.fixed[it.id] ?? it.fixed;
+      extra = `<td>${live ? `<label class="check-cell" title="每月对比默认显示"><input type="checkbox" data-act="fixed" ${fixed ? "checked" : ""}>固定</label>`
+                          : fixed ? '<span class="tag done">固定</span>' : ""}</td>`;
+    }
     const name = live ? `<input data-act="name" value="${esc(ed.names[it.id] ?? it.name)}">` : esc(it.name);
     const del = !ed ? "" : gone ? `<button class="icon" data-act="undelete" title="撤销删除">↺</button>`
       : it.used ? "" : `<button class="icon" data-act="delete" title="删除（还没有交易用它）">✕</button>`;
@@ -115,7 +120,7 @@ function renderList(kind) {
       <td>${name}</td>${extra}<td class="num">${it.used}</td><td>${del}</td></tr>`;
   });
   const added = (ed?.added ?? []).map((n, i) => `<tr class="added"><td></td><td>${esc(n)} <span class="tag">新增</span></td>` +
-    (kind === "accounts" ? `<td class="muted">保存后再加币种</td>` : kind === "currencies" ? "<td></td>" : "") +
+    (kind === "accounts" ? `<td class="muted">保存后再加币种</td>` : kind === "categories" ? `<td class="muted">保存后再设</td>` : "<td></td>") +
     `<td class="num">0</td><td><button class="icon" data-act="unadd" data-i="${i}" title="不添加了">✕</button></td></tr>`);
   $("set-" + kind).innerHTML = [...rows, ...added].join("") || `<tr><td colspan="5" class="empty">还没有${LIST_LABELS[kind]}</td></tr>`;
   $(`set-${kind}-new`).closest(".add-row").hidden = !ed;
@@ -132,6 +137,10 @@ function listChanges(kind) {
     if (name !== it.name) out.push({ text: `${label}「${it.name}」改名为「${name}」${it.used ? `（已有 ${it.used} 笔交易一起改）` : ""}`,
                                      op: { op: "rename", kind, id: it.id, name } });
   }
+  if (kind === "categories") for (const it of items) {
+    if (ed.deleted.has(it.id) || !(it.id in ed.fixed) || ed.fixed[it.id] === it.fixed) continue;
+    out.push({ text: `种类「${it.name}」${ed.fixed[it.id] ? "设为固定" : "不再是固定"}`, op: { op: "set_fixed", kind, id: it.id, fixed: ed.fixed[it.id] } });
+  }
   for (const name of ed.added) out.push({ text: `新增${label}「${name}」`, op: { op: "add", kind, name } });
   if (kind === "accounts") for (const it of items) {
     if (ed.deleted.has(it.id)) continue;
@@ -143,7 +152,7 @@ function listChanges(kind) {
 for (const kind of Object.keys(LIST_LABELS)) lockable(kind, {
   label: LIST_LABELS[kind],
   editing: () => !!listEdit[kind],
-  begin() { listEdit[kind] = { names: {}, deleted: new Set(), added: [], addCur: {}, rmCur: {} }; renderList(kind); },
+  begin() { listEdit[kind] = { names: {}, deleted: new Set(), added: [], addCur: {}, rmCur: {}, fixed: {} }; renderList(kind); },
   end() { listEdit[kind] = null; renderList(kind); },
   changes: () => listChanges(kind).map(c => c.text),
   save: () => api("/api/settings/batch", send("POST", { ops: listChanges(kind).map(c => c.op) })),
@@ -194,6 +203,11 @@ $("view-settings").addEventListener("input", e => {
 });
 $("view-settings").addEventListener("change", e => {
   const tr = e.target.closest("tr[data-kind]");
+  if (e.target.dataset.act === "fixed" && tr && listEdit.categories) {
+    listEdit.categories.fixed[tr.dataset.id] = e.target.checked;
+    lockMsg = "";
+    return renderLock();
+  }
   if (e.target.dataset.act !== "add-cur" || !e.target.value || !tr) return;
   const ed = listEdit.accounts;
   if (!ed) return;

@@ -171,6 +171,11 @@
 
   <!-- ===== 收支 ===== -->
   <section id="view-monthly" hidden>
+   <div class="tabs" role="tablist">
+     <button data-motab="month" role="tab">本月</button>
+     <button data-motab="trend" role="tab">每月对比</button>
+   </div>
+   <div id="motab-month">
     <div class="card month-bar">
       <button class="secondary" id="mo-prev" title="上个月">‹</button>
       <select id="mo-month" aria-label="月份"></select>
@@ -194,6 +199,34 @@
       </table></div>
       <div class="legend">收入为正、支出为负。各币种是原币的合计（不涉及汇率），最右一列按本月汇率折算。汇差盈亏 = 上月底存量 ×（本月汇率 − 上月汇率），和结余页同一个算法；人民币合计 = 折算 + 汇差，应等于结余页的月度差额</div>
     </div>
+   </div>
+
+   <!-- 每月对比 -->
+   <div id="motab-trend" hidden>
+    <div class="card month-bar">
+      <button class="secondary" id="tr-prev" title="往前一个月">‹</button>
+      <select id="tr-end" aria-label="截止月份"></select>
+      <button class="secondary" id="tr-next" title="往后一个月">›</button>
+      <span id="tr-status" class="status"></span>
+      <label class="toggle">最近<select id="tr-span">
+        <option value="3">3 个月</option>
+        <option value="6" selected>6 个月</option>
+        <option value="12">12 个月</option>
+      </select></label>
+      <label class="toggle">币种<select id="tr-currency"></select></label>
+    </div>
+    <div id="tr-warn"></div>
+    <div class="card" id="tr-card" hidden>
+      <h2 id="tr-title"></h2>
+      <div class="pick" id="tr-pick"></div>
+      <div class="table-wrap"><table class="sheet trend">
+        <thead id="tr-head"></thead>
+        <tbody id="tr-rows"></tbody>
+        <tbody id="tr-foot" class="foot"></tbody>
+      </table></div>
+      <div class="legend" id="tr-legend"></div>
+    </div>
+   </div>
   </section>
 
   <!-- ===== 结余 ===== -->
@@ -249,9 +282,9 @@
     </div>
     <div class="card" data-set-panel="categories">
       <h2>种类</h2>
-      <p class="settings-help">月度收支表的行按这里的顺序</p>
+      <p class="settings-help">月度收支表的行按这里的顺序。标为「固定」的种类，每次打开「收支 › 每月对比」时默认显示</p>
       <div class="table-wrap"><table>
-        <thead><tr><th></th><th>名称</th><th class="num">交易</th><th></th></tr></thead>
+        <thead><tr><th></th><th>名称</th><th>固定</th><th class="num">交易</th><th></th></tr></thead>
         <tbody id="set-categories"></tbody>
       </table></div>
       <div class="add-row"><input id="set-categories-new" placeholder="新种类名称"><button class="secondary" data-add="categories">添加种类</button></div>
@@ -356,6 +389,7 @@
 <script src="/static/js/email-import.js"></script>
 <script src="/static/js/transactions.js"></script>
 <script src="/static/js/monthly.js"></script>
+<script src="/static/js/trend.js"></script>
 <script src="/static/js/balances.js"></script>
 <script src="/static/js/settings.js"></script>
 <script src="/static/js/opening.js"></script>

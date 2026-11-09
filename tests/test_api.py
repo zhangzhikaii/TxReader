@@ -528,3 +528,78 @@ def test_monthly_report(client):
     nov = client.get("/api/monthly?month=2026-11").json()  # no rate yet
     assert nov["converted_total"] == 0 and nov["fx_gain"]["日元"] is None and nov["base_grand_total"] is None
     assert client.get("/api/monthly?month=2026-1").status_code == 400
+
+
+def test_trend(client):
+    from datetime import date
+    from txreader import books
+    tx = lambda date_, currency, amount, category: {
+        "date": date_, "account": "现金", "currency": currency, "amount": amount, "category": category,
+        "description": ""}
+    rows = []
+    for m in ["07", "08", "09", "10"]:
+        rows.append(tx(f"2026/{m}/01 10:00:00", "日元", -50000, "房租"))
+        rows.append(tx(f"2026/{m}/25 10:00:00", "人民币", 8000, "工资"))
+    for m, v in [("07", -3000), ("08", -5000), ("10", -4000)]:
+        rows.append(tx(f"2026/{m}/10 10:00:00", "日元", v, "饮食费"))
+    rows += [tx("2026/09/16 10:00:00", "人民币", -100, "内部转账"),     # left out
+             tx("2026/11/01 10:00:00", "日元", -50000, "房租")]         # the month in progress
+    client.post("/api/transactions", json={"add_accounts": True, "rows": rows})
+    client.post("/api/settings/batch", json={"ops": [{"op": "add", "kind": "categories", "name": "交通费"}]})
+    today = date(2026, 11, 5)
+
+    t = books.trend(currency="日元", today=today)
+    assert t["end"] == "2026-11" and t["current"] == "2026-11"
+    assert t["months"] == ["2026-07", "2026-08", "2026-09", "2026-10", "2026-11"]  # nothing earlier
+    assert t["basis"] == t["months"][:4]
+    rows = {r["name"]: r for r in t["categories"]}
+    assert "内部转账" not in rows
+    assert (rows["房租"]["months"], rows["房租"]["average"], rows["房租"]["count"]) == (4, -50000, 5)
+    assert rows["房租"]["values"]["2026-11"] == -50000  # shown, but not in the average
+    assert (rows["饮食费"]["months"], rows["饮食费"]["average"]) == (3, -4000)  # months with transactions only
+    assert rows["工资"]["values"] == {} and rows["工资"]["average"] is None  # no yen
+    assert rows["交通费"]["values"] == {} and rows["交通费"]["months"] == 0  # on the list, no transactions yet
+    assert t["currencies"] == ["日元", "人民币"]
+
+    # All converted: a month without its rate can't be worked out
+    for m in ["07", "08", "09", "10"]:
+        client.put(f"/api/rates/2026-{m}/日元", json={"rate": 0.05})
+    rows = {r["name"]: r for r in books.trend(today=today)["categories"]}
+    assert rows["房租"]["values"]["2026-10"] == -2500 and rows["房租"]["values"]["2026-11"] is None
+    assert rows["工资"]["average"] == 8000
+    assert books.trend(today=today)["missing_rates"] == ["2026-11"]
+
+    # A past window has no month in progress
+    t = client.get("/api/trend?end=2026-09&span=3&currency=日元").json()
+    assert t["months"] == ["2026-07", "2026-08", "2026-09"] and t["current"] is None and t["basis"] == t["months"]
+    assert client.get("/api/trend?span=5").status_code == 400
+    assert client.get("/api/trend?currency=没有").status_code == 404
+
+
+def test_fixed_categories(client):
+    from txreader import books
+    from txreader.db import connect
+    client.post("/api/settings/batch", json={"ops": [
+        {"op": "add", "kind": "categories", "name": "房租"}, {"op": "add", "kind": "categories", "name": "家电"}]})
+    cats = {c["name"]: c for c in client.get("/api/settings").json()["categories"]}
+    assert not cats["房租"]["fixed"]  # new ones aren't
+    ok = client.post("/api/settings/batch", json={"ops": [
+        {"op": "set_fixed", "kind": "categories", "id": cats["房租"]["id"], "fixed": True}]})
+    assert ok.status_code == 200
+    cats = {c["name"]: c for c in client.get("/api/settings").json()["categories"]}
+    assert cats["房租"]["fixed"] and not cats["家电"]["fixed"]
+    assert {r["name"]: r["fixed"] for r in books.trend()["categories"]} == {"房租": True, "家电": False}
+    # Only categories can be marked
+    client.post("/api/settings/batch", json={"ops": [{"op": "add", "kind": "accounts", "name": "现金"}]})
+    aid = client.get("/api/settings").json()["accounts"][0]["id"]
+    assert client.post("/api/settings/batch", json={"ops": [
+        {"op": "set_fixed", "kind": "accounts", "id": aid, "fixed": True}]}).status_code == 400
+
+    # An older database gains the column, with the categories compared before marked
+    from txreader import db
+    with connect() as conn:
+        conn.execute("ALTER TABLE categories DROP COLUMN fixed")
+    db._initialized.clear()  # opened again as at start-up
+    with connect() as conn:
+        marked = {r[0]: r[1] for r in conn.execute("SELECT name, fixed FROM categories")}
+    assert marked == {"房租": 1, "家电": 0}

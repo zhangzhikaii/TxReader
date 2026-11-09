@@ -371,3 +371,91 @@ def monthly(month: str | None = None, today: date | None = None) -> dict:
         # Each cell is rounded on its own, so allow a few cents
         out["check"] = "ok" if abs(out["base_grand_total"] - out["balance_change"]) < 0.05 else "diff"
     return out
+
+
+# ---------- month-by-month comparison ----------
+
+TRANSFER = "内部转账"  # moves money between accounts; not income or expense
+
+
+def trend(end: str | None = None, span: int = 6, currency: str | None = None,
+          today: date | None = None) -> dict:
+    """Every category month by month over the `span` months up to `end` (docs/plan.md, 每月对比);
+    the page picks which ones to compare.
+
+    {"end", "months": [the window, oldest first], "choices": [ends to choose from, newest first],
+     "span", "currency": one currency as booked, or None = all converted to the base currency,
+     "currencies": [to choose from], "base", "current": the month still in progress or None,
+     "basis": months the averages use, "categories": [rows], "missing_rates": [months whose
+     conversion is incomplete]}
+
+    A row is {"name", "values": {month: sum, or None when a rate is missing}, "months": how many
+    basis months it has transactions in, "average": over those months, "count", "fixed": marked in
+    settings to be compared by default}. Rows are every
+    category on the list (in list order, with or without transactions), then any others that
+    have transactions. The month still in progress is shown but left out of the basis, as it
+    would pull averages down; the internal transfer category is left out altogether."""
+    if span not in (3, 6, 12):
+        raise ValueError("月数只能是 3、6 或 12")
+    today = today or date.today()
+    this = f"{today.year}-{today.month:02d}"
+    with connect() as conn:
+        choices = _all_months(conn, today)[::-1]
+        end = _check_month(end) if end else choices[0]
+        months = [m for m in months_between(_shift(end, 1 - span), end) if m >= choices[-1]] or [end]
+        base = conn.execute("SELECT name FROM currencies WHERE is_base = 1").fetchone()
+        cur_order = [r[0] for r in conn.execute("SELECT name FROM currencies ORDER BY sort, id")]
+        cat_order, fixed = [], set()
+        for r in conn.execute("SELECT name, fixed FROM categories ORDER BY sort, id"):
+            cat_order.append(r[0])
+            if r[1]:
+                fixed.add(r[0])
+        rates = {m: _rates_for(conn, m) for m in months}
+        # (category, currency, month) -> sum
+        flows: dict[tuple[str, str, str], float] = {}
+        counts: dict[str, int] = {}
+        lo, hi = months[0].replace("-", "/"), months[-1].replace("-", "/")
+        for r in conn.execute(
+                "SELECT category, currency, substr(date, 1, 7), SUM(amount), COUNT(*) FROM transactions"
+                " WHERE substr(date, 1, 7) BETWEEN ? AND ? AND category != ? GROUP BY 1, 2, 3", (lo, hi, TRANSFER)):
+            flows[(r[0], r[1], r[2].replace("/", "-"))] = r[3]
+            if currency is None or r[1] == currency:
+                counts[r[0]] = counts.get(r[0], 0) + r[4]
+
+    used = {c for _, c, _ in flows}
+    currencies = [c for c in cur_order if c in used] + sorted(used - set(cur_order))
+    if currency is not None and currency not in currencies + cur_order:
+        raise NotFound(currency)
+
+    # One value per category and month: that currency's sum, or every currency converted
+    values: dict[str, dict[str, float | None]] = {}
+    missing = set()
+    for (cat, cur, month), v in flows.items():
+        if currency is not None:
+            if cur == currency:
+                values.setdefault(cat, {})[month] = v
+            continue
+        row = values.setdefault(cat, {})
+        if cur in rates[month] and row.get(month, 0) is not None:
+            row[month] = row.get(month, 0) + v * rates[month][cur]
+        elif v:
+            row[month] = None
+            missing.add(month)
+        else:
+            row.setdefault(month, 0)
+    values = {cat: {m: (None if v is None else round(v, 2)) for m, v in row.items()} for cat, row in values.items()}
+
+    current = this if this in months else None
+    basis = [m for m in months if m != current] or months
+
+    def row(name):
+        vals = values.get(name, {})
+        seen = [m for m in basis if m in vals]
+        known = [vals[m] for m in seen if vals[m] is not None]
+        return {"name": name, "values": vals, "months": len(seen), "count": counts.get(name, 0),
+                "average": round(sum(known) / len(known), 2) if known else None, "fixed": name in fixed}
+
+    names = [n for n in cat_order if n != TRANSFER] + sorted(set(values) - set(cat_order))
+    return {"end": end, "months": months, "choices": choices, "span": span, "currency": currency,
+            "currencies": currencies, "base": base[0] if base else None, "current": current,
+            "basis": basis, "categories": [row(n) for n in names], "missing_rates": sorted(missing)}

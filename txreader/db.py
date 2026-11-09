@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS categories (
     id         INTEGER PRIMARY KEY,
     name       TEXT NOT NULL UNIQUE,
     sort       INTEGER NOT NULL DEFAULT 0,
+    fixed      INTEGER NOT NULL DEFAULT 0,  -- compared month by month by default (收支 › 每月对比)
     created_at TEXT NOT NULL
 );
 
@@ -231,6 +232,12 @@ def _migrate(conn) -> None:
             conn.execute("ALTER TABLE currencies ADD COLUMN is_base INTEGER NOT NULL DEFAULT 0")
         if "archived" in cols:
             conn.execute(f"ALTER TABLE {table} DROP COLUMN archived")
+
+    # Categories gained `fixed`; the ones the comparison showed before it start out marked
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(categories)")}
+    if "fixed" not in cols:
+        conn.execute("ALTER TABLE categories ADD COLUMN fixed INTEGER NOT NULL DEFAULT 0")
+        conn.execute("UPDATE categories SET fixed = 1 WHERE name IN ('饮食费', '交通费', '房租', '水电煤')")
 
     # The lists started out empty: fill them once from the transactions so far
     if not conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():

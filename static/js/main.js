@@ -23,7 +23,7 @@ function route() {
   if (view === "transactions") loadSuggestions().then(fillTxFilters).then(loadTransactions); // lists may have changed in settings
   if (view === "settings") { loadSettings(); loadRates(); loadEmailSettings(); }
   if (view === "balances") loadBalances($("bal-month").value || null);
-  if (view === "monthly") loadMonthly($("mo-month").value || null);
+  if (view === "monthly") loadMonthlyPage();
   if (view === "security") loadSecurity();
 }
 window.addEventListener("hashchange", route);

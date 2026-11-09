@@ -93,3 +93,9 @@ def balance_sheet(month: str | None = None):
 def monthly_report(month: str | None = None):
     """One month's income and expense by category and currency, converted, with the FX gain."""
     return books.monthly(month)
+
+
+@router.get("/api/trend")
+def trend(end: str | None = None, span: int = 6, currency: str | None = None):
+    """Recurring categories month by month, in one currency or all converted to the base."""
+    return books.trend(end, span, currency)

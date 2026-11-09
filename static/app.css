@@ -197,3 +197,19 @@ textarea { font:inherit; font-size:13px; width:100%; padding:6px 8px; border:1px
 .rule .patterns input, #em-redirect { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; }
 .rule .bar { margin-top:8px; }
 #em-redirect { padding:2px 6px; background:#f3f4f6; border-radius:4px; color:var(--text); user-select:all; word-break:break-all; }
+/* Month-by-month comparison: cells well above / below the row's average, the month in progress */
+table.trend td.more { background:#fef3c7; }
+table.trend td.less { background:#dbeafe; }
+table.trend td.now { opacity:.6; }
+table.trend td.clickable { cursor:pointer; }
+table.trend td.clickable:hover { outline:1px solid var(--muted); outline-offset:-1px; }
+.sw.more { background:#fef3c7; }
+.sw.less { background:#dbeafe; }
+.pick { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px; }
+.chip { display:inline-flex; align-items:center; gap:2px; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:999px;
+        padding:2px 4px 2px 12px; font-size:14px; }
+.chip-x { background:none; color:var(--muted); padding:0 6px; font-size:16px; line-height:1; border-radius:999px; }
+.chip-x:hover { color:#b91c1c; background:#fee2e2; }
+.pick select { padding:4px 6px; }
+.check-cell { display:inline-flex; align-items:center; gap:4px; font-size:14px; cursor:pointer; }
+.pick-help { margin-left:auto; font-size:13px; color:var(--muted); }

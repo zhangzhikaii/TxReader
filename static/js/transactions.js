@@ -28,7 +28,20 @@ function fillTxFilters() {
   fill("tx-account", "账户", sugg.accounts.map(a => a.name));
   fill("tx-currency", "币种", sugg.currencies);
   fill("tx-category", "种类", sugg.categories);
+  // Opened from a cell of 收支 › 每月对比: that month, category and currency only
+  if (txPreset) {
+    const p = txPreset;
+    txPreset = null;
+    $("tx-from").value = p.from;
+    $("tx-to").value = p.to;
+    $("tx-account").value = $("tx-source").value = "";
+    for (const [id, v] of [["tx-category", p.category], ["tx-currency", p.currency]]) {
+      if (v && ![...$(id).options].some(o => o.value === v)) $(id).insertAdjacentHTML("beforeend", `<option>${esc(v)}</option>`);
+      $(id).value = v;
+    }
+  }
 }
+let txPreset = null;
 
 let txRows = [];
 async function loadTransactions() {

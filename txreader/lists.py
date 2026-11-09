@@ -70,7 +70,7 @@ def settings() -> dict:
     with connect() as conn:
         out = {}
         for table, col in KINDS.items():
-            extra = ", is_base" if table == "currencies" else ""
+            extra = {"currencies": ", is_base", "categories": ", fixed"}.get(table, "")
             out[table] = [dict(r) for r in conn.execute(
                 f"SELECT id, name{extra},"
                 f" (SELECT COUNT(*) FROM transactions t WHERE t.{col} = x.name) AS used"
@@ -86,6 +86,8 @@ def settings() -> dict:
             a["currencies"] = pairs.get(a["id"], [])
         for c in out["currencies"]:
             c["is_base"] = bool(c["is_base"])
+        for c in out["categories"]:
+            c["fixed"] = bool(c["fixed"])
         return out
 
 
@@ -121,11 +123,16 @@ def add(kind: str, name: str) -> int:
 
 
 def update(kind: str, item_id: int, changes: dict) -> None:
-    """changes: name (renames the transactions too). The base currency is fixed (人民币):
-    changing it would make every rate typed in so far wrong."""
+    """changes: name (renames the transactions too); for categories also fixed (compared month
+    by month by default). The base currency is fixed (人民币): changing it would make every rate
+    typed in so far wrong."""
     kind = _check_kind(kind)
     with connect() as conn:
         old = _get(conn, kind, item_id)
+        if changes.get("fixed") is not None:
+            if kind != "categories":
+                raise ValueError("只有种类可以设为固定")
+            conn.execute("UPDATE categories SET fixed = ? WHERE id = ?", (int(bool(changes["fixed"])), item_id))
         if changes.get("name") is not None:
             name = _clean_name(changes["name"])
             if name != old["name"]:
@@ -197,10 +204,12 @@ def remove_account_currency(account_id: int, currency: str) -> None:
 def apply(ops: list[dict]) -> None:
     """The settings page's edits of one list, saved together: all or nothing. Each op is
     {"op": "add", "kind", "name"}, {"op": "rename", "kind", "id", "name"}, {"op": "delete", "kind", "id"},
+    {"op": "set_fixed", "kind": "categories", "id", "fixed"},
     {"op": "add_currency", "id" (account), "name"} or {"op": "remove_currency", "id", "name"}."""
     actions = {
         "add": lambda o: add(o["kind"], o.get("name")),
         "rename": lambda o: update(o["kind"], o["id"], {"name": o.get("name")}),
+        "set_fixed": lambda o: update(o["kind"], o["id"], {"fixed": bool(o.get("fixed"))}),
         "delete": lambda o: delete(o["kind"], o["id"]),
         "add_currency": lambda o: add_account_currency(o["id"], o.get("name")),
         "remove_currency": lambda o: remove_account_currency(o["id"], o.get("name")),
