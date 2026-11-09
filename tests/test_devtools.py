@@ -59,10 +59,6 @@ def test_seed_rejects_bad_files(data, capsys):
 def test_clear_asks_first(data, capsys):
     (data / "seed" / "oct.csv").write_text(SEED, encoding="utf-8")
     devtools.seed("oct.csv")
-    with connect() as conn:
-        tx = conn.execute("SELECT id FROM transactions").fetchone()[0]
-        conn.execute("INSERT INTO exports (at, filename, count) VALUES ('t', 'x.csv', 1)")
-        conn.execute("INSERT INTO export_items VALUES (1, ?)", (tx,))
 
     assert devtools.clear(confirm=lambda q: False) == 1
     assert len(rows()) == 3
@@ -71,6 +67,5 @@ def test_clear_asks_first(data, capsys):
     assert "Type 'yes'" in asked[0]
     assert rows() == []
     with connect() as conn:
-        assert conn.execute("SELECT COUNT(*) FROM exports").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 2  # the lists stay
     assert devtools.clear(confirm=lambda q: pytest.fail("nothing to ask")) == 0

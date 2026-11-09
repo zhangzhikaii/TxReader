@@ -10,6 +10,7 @@ import hashlib
 import os
 import sqlite3
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -148,20 +149,6 @@ CREATE TABLE IF NOT EXISTS fx_rates (
     PRIMARY KEY (month, currency_id)
 );
 
-CREATE TABLE IF NOT EXISTS exports (
-    id       INTEGER PRIMARY KEY,
-    at       TEXT NOT NULL,
-    filename TEXT NOT NULL,
-    count    INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS export_items (
-    export_id      INTEGER NOT NULL REFERENCES exports(id),
-    transaction_id INTEGER NOT NULL REFERENCES transactions(id),
-    PRIMARY KEY (export_id, transaction_id)
-);
-CREATE INDEX IF NOT EXISTS export_items_tx ON export_items(transaction_id);
-
 CREATE TABLE IF NOT EXISTS login_events (
     id         INTEGER PRIMARY KEY,
     at         TEXT NOT NULL,
@@ -183,6 +170,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 """
 
 _initialized: set[Path] = set()
+_shared: ContextVar[sqlite3.Connection | None] = ContextVar("_shared", default=None)
 
 
 def data_dir() -> Path:
@@ -253,6 +241,10 @@ def _migrate(conn) -> None:
             "SELECT category FROM transactions GROUP BY category ORDER BY MIN(id)")])
     default_base(conn)
 
+    # Export records (how often each transaction was exported) were dropped with the export page
+    conn.execute("DROP TABLE IF EXISTS export_items")
+    conn.execute("DROP TABLE IF EXISTS exports")
+
 
 def _add_name(conn, table: str, name: str, t: str) -> None:
     """Add a name to a list (at the end) unless it is already there."""
@@ -289,7 +281,32 @@ def default_base(conn) -> None:
 
 @contextmanager
 def connect():
-    """A connection that commits on success and rolls back on error."""
+    """A connection that commits on success and rolls back on error. Inside `transaction()`
+    it is that transaction's connection, committed only when the whole transaction is done."""
+    shared = _shared.get()
+    if shared is not None:
+        yield shared
+        return
+    with _connect() as conn:
+        yield conn
+
+
+@contextmanager
+def transaction():
+    """Several edits all or nothing: every connect() inside shares one connection, and an
+    error anywhere rolls all of them back."""
+    if _shared.get() is not None:
+        raise RuntimeError("transaction() can't be nested")
+    with _connect() as conn:
+        token = _shared.set(conn)
+        try:
+            yield conn
+        finally:
+            _shared.reset(token)
+
+
+@contextmanager
+def _connect():
     root = data_dir()
     path = root / "txreader.db"
     if path not in _initialized:

@@ -83,14 +83,14 @@ def test_review_confirm_and_skip_on_next_upload(client):
     assert len(client.get("/api/pending", params={"source": "wechat"}).json()["pending"]) == 2
 
 
-def test_transactions_and_exports(client):
+def test_transactions_and_export(client):
     pending = upload(client, b"shot1")["pending"]
     rows = [{"id": p["id"], "date": p["date"], "account": "微信", "currency": "人民币", "amount": p["amount"],
              "category": "饮食费", "description": p["merchant"]} for p in pending]
     client.post("/api/confirm", json={"rows": rows})
     txs = client.get("/api/transactions").json()["transactions"]
     assert [t["description"] for t in txs] == ["便利店", "超市"]
-    assert all(t["export_count"] == 0 and t["source"] == "wechat" for t in txs)
+    assert all(t["source"] == "wechat" for t in txs)
 
     # Only the category and description can change after confirming
     tx_url = f"/api/transactions/{txs[0]['id']}"
@@ -104,18 +104,23 @@ def test_transactions_and_exports(client):
     assert client.patch(tx_url, json={"category": "日用品"}).is_success
     assert client.patch(tx_url, json={"amount": 5}).status_code == 400
 
-    r = client.post("/api/exports", json={"ids": [t["id"] for t in txs], "filename": "out.csv"})
+    r = client.get("/api/transactions/export")
+    assert r.headers["content-type"].startswith("text/csv")
     assert r.content.decode("utf-8") == (
         "﻿日期,曜日,账户,币种,金额,种类,描述\r\n"
         '2026/10/01 12:00:00,木,微信,人民币,-10.00,日用品,"Shop, ""A"""\r\n'
         "2026/10/02 09:00:00,金,微信,人民币,-20.00,饮食费,超市\r\n")
-    client.post("/api/exports", json={"ids": [txs[0]["id"]]})  # exporting again is allowed
-    txs = client.get("/api/transactions").json()["transactions"]
-    assert [t["export_count"] for t in txs] == [2, 1]
-    assert [e["count"] for e in client.get("/api/exports").json()["exports"]] == [1, 2]
 
-    only = client.get("/api/transactions", params={"date_from": "2026-10-02", "date_to": "2026-10-02"}).json()
-    assert [t["description"] for t in only["transactions"]] == ["超市"]
+    # The export uses the same filters as the list
+    only = {"date_from": "2026-10-02", "date_to": "2026-10-02"}
+    assert [t["description"] for t in client.get("/api/transactions", params=only).json()["transactions"]] == ["超市"]
+    assert client.get("/api/transactions/export", params=only).content.decode("utf-8").splitlines()[1:] == [
+        "2026/10/02 09:00:00,金,微信,人民币,-20.00,饮食费,超市"]
+    # Manual entries are exported too
+    client.post("/api/transactions", json={"rows": [{"date": "2026/10/03 08:00:00", "account": "微信", "currency": "人民币",
+                                                     "amount": -5, "category": "饮食费", "description": "手填"}]})
+    assert client.get("/api/transactions/export", params={"source": "manual"}).content.decode("utf-8").splitlines()[1:] == [
+        "2026/10/03 08:00:00,土,微信,人民币,-5.00,饮食费,手填"]
 
 
 def test_confirm_rejects_bad_dates_and_confirmed_rows(client):
@@ -130,13 +135,13 @@ def test_confirm_rejects_bad_dates_and_confirmed_rows(client):
 def test_login_lockout_and_sessions(client, monkeypatch):
     monkeypatch.setenv("TXREADER_AUTH", "on")
     monkeypatch.setenv("TXREADER_PASSWORD_HASH", auth.hash_password(PASSWORD))
-    assert client.get("/api/exports").status_code == 401
+    assert client.get("/api/settings").status_code == 401
     assert client.get("/", follow_redirects=False).headers["location"] == "/login"
 
     assert client.post("/api/login", json={"password": PASSWORD}).is_success
-    assert client.get("/api/exports").is_success
+    assert client.get("/api/settings").is_success
     assert client.post("/api/logout").is_success
-    assert client.get("/api/exports").status_code == 401
+    assert client.get("/api/settings").status_code == 401
 
     for _ in range(auth.MAX_FAILURES):
         assert "密码不对" in client.post("/api/login", json={"password": "nope"}).json()["detail"]
@@ -149,7 +154,7 @@ def test_login_lockout_and_sessions(client, monkeypatch):
     assert [e["reason"] for e in sec["events"][:3]] == ["ok", "locked", "bad_password"]
     assert len(sec["sessions"]) == 1 and sec["sessions"][0]["current"]
     client.post("/api/logout-all")
-    assert client.get("/api/exports").status_code == 401
+    assert client.get("/api/settings").status_code == 401
 
 
 def test_idle_session_expires(client, monkeypatch):
@@ -157,7 +162,7 @@ def test_idle_session_expires(client, monkeypatch):
     monkeypatch.setenv("TXREADER_PASSWORD_HASH", auth.hash_password(PASSWORD))
     monkeypatch.setenv("TXREADER_IDLE_MINUTES", "30")
     assert client.post("/api/login", json={"password": PASSWORD}).is_success
-    assert client.get("/api/exports").is_success
+    assert client.get("/api/settings").is_success
 
     def idle_for(minutes):
         with connect() as conn:
@@ -165,13 +170,13 @@ def test_idle_session_expires(client, monkeypatch):
                          ((datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat(timespec="seconds"),))
 
     idle_for(20)  # still within the limit, and the request keeps it alive
-    assert client.get("/api/exports").is_success
+    assert client.get("/api/settings").is_success
     with connect() as conn:
         seen = datetime.fromisoformat(conn.execute("SELECT last_seen_at FROM sessions").fetchone()[0])
     assert datetime.now(timezone.utc) - seen < timedelta(minutes=1)
 
     idle_for(31)
-    assert client.get("/api/exports").status_code == 401
+    assert client.get("/api/settings").status_code == 401
     with connect() as conn:
         assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
 
@@ -247,7 +252,8 @@ def test_old_transactions_table_is_upgraded(tmp_path, monkeypatch):
     with db.connect() as conn:
         r = conn.execute("SELECT id, origin, ocr_row_id FROM transactions").fetchone()
         assert tuple(r) == (7, "screenshot", 3)
-        assert conn.execute("SELECT transaction_id FROM export_items").fetchone()[0] == 7
+        # Export records were dropped
+        assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name IN ('exports', 'export_items')").fetchone()
         # The account list starts from the accounts already used
         assert tuple(conn.execute("SELECT a.name, c.name FROM account_currencies ac JOIN accounts a ON a.id = ac.account_id"
                             " JOIN currencies c ON c.id = ac.currency_id").fetchone()) == ("微信", "人民币")
@@ -298,6 +304,56 @@ def test_settings_lists(client):
     assert client.delete(f"/api/settings/currencies/{rmb['id']}").status_code == 400  # the base currency
     assert client.delete("/api/settings/categories/999").status_code == 404
     assert client.get("/api/settings/nope").status_code in (404, 405)
+
+
+def test_settings_batch_is_all_or_nothing(client):
+    client.post("/api/transactions", json={"add_accounts": True, "rows": [
+        {"date": "2026/10/05 08:30:00", "account": "现金", "currency": "日元", "amount": -500,
+         "category": "饮食费", "description": ""}]})
+    lists = lambda: client.get("/api/settings").json()
+    cash = lists()["accounts"][0]["id"]
+    food = lists()["categories"][0]["id"]
+
+    # The last edit fails (renaming to a name that's taken), so none of them is saved
+    r = client.post("/api/settings/batch", json={"ops": [
+        {"op": "add", "kind": "accounts", "name": "某银行"},
+        {"op": "rename", "kind": "categories", "id": food, "name": "餐饮"},
+        {"op": "add", "kind": "categories", "name": "交通费"},
+        {"op": "rename", "kind": "categories", "id": food, "name": "交通费"}]})
+    assert r.status_code == 400 and "同名" in r.json()["detail"]
+    assert [a["name"] for a in lists()["accounts"]] == ["现金"]
+    assert [c["name"] for c in lists()["categories"]] == ["饮食费"]
+    assert client.get("/api/transactions").json()["transactions"][0]["category"] == "饮食费"
+
+    assert client.post("/api/settings/batch", json={"ops": [
+        {"op": "add", "kind": "currencies", "name": "人民币"},
+        {"op": "add_currency", "id": cash, "name": "人民币"},
+        {"op": "rename", "kind": "categories", "id": food, "name": "餐饮"},
+        {"op": "add", "kind": "categories", "name": "交通费"}]}).is_success
+    assert [c["name"] for c in lists()["accounts"][0]["currencies"]] == ["日元", "人民币"]
+    assert [c["name"] for c in lists()["categories"]] == ["餐饮", "交通费"]
+    assert client.get("/api/transactions").json()["transactions"][0]["category"] == "餐饮"
+    assert client.post("/api/settings/batch", json={"ops": [{"op": "drop", "id": cash}]}).status_code == 400
+
+    # Opening balances and rates: also all or nothing
+    r = client.put("/api/opening", json={"start_month": "2026-09", "balances": [
+        {"account_id": cash, "currency": "日元", "amount": 1000},
+        {"account_id": cash, "currency": "美元", "amount": 5}]})  # the account has no 美元
+    assert r.status_code >= 400
+    op = client.get("/api/opening").json()
+    assert op["start_month"] is None and op["accounts"][0]["balances"]["日元"] is None
+    assert client.put("/api/opening", json={"start_month": "2026-09", "balances": [
+        {"account_id": cash, "currency": "日元", "amount": 1000}]}).is_success
+    assert client.put("/api/opening", json={"balances": []}).is_success  # start month left as it is
+    op = client.get("/api/opening").json()
+    assert op["start_month"] == "2026-09" and op["accounts"][0]["balances"]["日元"] == 1000
+
+    r = client.put("/api/rates", json={"rates": [{"month": "2026-09", "currency": "日元", "rate": 0.05},
+                                                 {"month": "2026-10", "currency": "日元", "rate": -1}]})
+    assert r.status_code == 400 and client.get("/api/rates").json()["rates"] == {}
+    assert client.put("/api/rates", json={"rates": [{"month": "2026-09", "currency": "日元", "rate": 0.05},
+                                                    {"month": "2026-10", "currency": "日元", "rate": 0.048}]}).is_success
+    assert client.get("/api/rates").json()["rates"] == {"2026-09": {"日元": 0.05}, "2026-10": {"日元": 0.048}}
 
 
 def test_dropped_archived_column(tmp_path, monkeypatch):
@@ -403,6 +459,9 @@ def test_balance_sheet(client):
     assert (octo["converted"], octo["total"]) == ({"日元": 450, "人民币": 400.5}, 850.5)
     assert octo["fx_gain"] == {"日元": 100, "人民币": 0}  # 10,000 x (0.05 - 0.04)
     assert (octo["fx_gain_total"], octo["prev_total"], octo["change"]) == (100, 800, 50.5)
+    # Transactions this month per account, for hiding the quiet ones on the page
+    assert [(a["name"], a["count"]) for a in octo["accounts"]] == [("现金", 1), ("某银行", 1)]
+    assert [a["count"] for a in sep["accounts"]] == [1, 0]
     # change = this month's flows at this month's rate + FX gain: -1000 x 0.05 + 0.5 + 100
     assert octo["change"] == round(-1000 * 0.05 + 0.5 + octo["fx_gain_total"], 2)
 

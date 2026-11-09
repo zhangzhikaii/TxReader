@@ -45,13 +45,12 @@ def clear(confirm=ask_yes) -> int:
     db = data_dir() / "txreader.db"
     with connect() as conn:
         n = conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
-        exports = conn.execute("SELECT COUNT(*) FROM exports").fetchone()[0]
         confirmed = conn.execute("SELECT COUNT(*) FROM ocr_rows WHERE status = 'confirmed'").fetchone()[0]
-    if not n and not exports and not confirmed:
+    if not n and not confirmed:
         print(f"No transactions in {db}. Nothing to do.")
         return 0
     print(f"Database: {db}")
-    print(f"This will permanently delete {n} transaction(s), {exports} export record(s) and the "
+    print(f"This will permanently delete {n} transaction(s) and the "
           f"{confirmed} confirmed screenshot / email row(s) behind them (so those screenshots can be recognized\n"
           "and those emails read again). The next email update starts over from a date you pick.")
     print("Kept: pending rows, screenshots, the account / currency / category lists, opening balances, rates.")
@@ -59,8 +58,6 @@ def clear(confirm=ask_yes) -> int:
         print("Cancelled. Nothing was deleted.")
         return 1
     with connect() as conn:
-        conn.execute("DELETE FROM export_items")
-        conn.execute("DELETE FROM exports")
         conn.execute("DELETE FROM transactions")
         # Emails behind them are forgotten too, so they can be read again
         email_ids = [r[0] for r in conn.execute(

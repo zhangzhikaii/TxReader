@@ -1,6 +1,10 @@
 // 「结余」: month-end balances of every account and currency.
 
 let bal = null;
+{
+  const v = load("tx.balances.hideQuiet");
+  if (v !== null) $("bal-hide-quiet").checked = v === "1";
+}
 async function loadBalances(month) {
   try { bal = await api("/api/balances" + (month ? "?month=" + month : "")); }
   catch (e) { return flash("bal-status", "读取失败：" + e.message); }
@@ -13,7 +17,7 @@ async function loadBalances(month) {
   if (!bal.month) {
     $("bal-card").hidden = true;
     $("bal-tiles").innerHTML = "";
-    $("bal-warn").innerHTML = `<div class="warn-box">还没有设起始月。先去「<a href="#settings">设置</a>」最下面选起始月，填好那个月底各账户的余额。</div>`;
+    $("bal-warn").innerHTML = `<div class="warn-box">还没有设起始月。先去「<a href="#settings">设置 › 期初余额</a>」选起始月，填好那个月底各账户的余额。</div>`;
     return;
   }
   const cur = bal.currencies, base = bal.base ?? "本位币";
@@ -23,9 +27,7 @@ async function loadBalances(month) {
   $("bal-card").hidden = false;
   $("bal-title").textContent = monthEnd(bal.month) + " 结余";
   $("bal-head").innerHTML = `<tr><th>账户</th>${cur.map(c => `<th class="num">${esc(c)}</th>`).join("")}</tr>`;
-  $("bal-rows").innerHTML = bal.accounts.map(a =>
-    `<tr><td>${esc(a.name)}</td>${cur.map(c => moneyCell(a.balances[c])).join("")}</tr>`).join("") ||
-    `<tr><td colspan="${cur.length + 1}" class="empty">还没有账户</td></tr>`;
+  renderBalanceRows();
   const first = bal.month === bal.start_month;
   $("bal-foot").innerHTML =
     `<tr class="strong"><td>合计（原币）</td>${cur.map(c => moneyCell(bal.totals[c])).join("")}</tr>` +
@@ -55,3 +57,18 @@ async function loadBalances(month) {
 $("bal-month").addEventListener("change", e => loadBalances(e.target.value));
 $("bal-prev").onclick = () => { const i = bal.months.indexOf(bal.month); loadBalances(bal.months[i + 1]); };
 $("bal-next").onclick = () => { const i = bal.months.indexOf(bal.month); loadBalances(bal.months[i - 1]); };
+// Account rows; the totals below always count every account
+function renderBalanceRows() {
+  const cur = bal.currencies;
+  const quiet = a => !a.count && Object.values(a.balances).every(v => !v);
+  const rows = $("bal-hide-quiet").checked ? bal.accounts.filter(a => !quiet(a)) : bal.accounts;
+  const hidden = bal.accounts.length - rows.length;
+  $("bal-rows").innerHTML = rows.map(a =>
+    `<tr><td>${esc(a.name)}${a.count ? `<span class="count">${a.count} 笔</span>` : ""}</td>${cur.map(c => moneyCell(a.balances[c])).join("")}</tr>`).join("") ||
+    `<tr><td colspan="${cur.length + 1}" class="empty">${bal.accounts.length ? "这个月没有交易、也没有余额的账户都隐藏了" : "还没有账户"}</td></tr>`;
+  flash("bal-status", hidden ? `隐藏了 ${hidden} 个账户` : "");
+}
+$("bal-hide-quiet").addEventListener("change", e => {
+  save("tx.balances.hideQuiet", e.target.checked ? "1" : "0");
+  if (bal?.month) renderBalanceRows();
+});

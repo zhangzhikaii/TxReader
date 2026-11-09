@@ -16,6 +16,25 @@ class MonthBody(BaseModel):
     month: str | None = None
 
 
+class OpeningCell(BaseModel):
+    account_id: int
+    currency: str
+    amount: float | None = None
+
+
+class OpeningEdits(BaseModel):
+    start_month: str | None = None  # left out: unchanged; null: cleared
+    balances: list[OpeningCell] = []
+
+
+@router.put("/api/opening")
+def save_opening(body: OpeningEdits):
+    """The start month and several balances, saved together: all or nothing."""
+    books.save_opening([b.model_dump() for b in body.balances], body.start_month,
+                       set_start="start_month" in body.model_fields_set)
+    return {"ok": True}
+
+
 @router.put("/api/opening/start-month")
 def set_start_month(body: MonthBody):
     books.set_start_month(body.month)
@@ -39,6 +58,23 @@ def rates():
 
 class RateBody(BaseModel):
     rate: float | None = None
+
+
+class RateCell(BaseModel):
+    month: str
+    currency: str
+    rate: float | None = None
+
+
+class RateEdits(BaseModel):
+    rates: list[RateCell]
+
+
+@router.put("/api/rates")
+def save_rates(body: RateEdits):
+    """Several rates saved together: all or nothing."""
+    books.save_rates([r.model_dump() for r in body.rates])
+    return {"ok": True}
 
 
 @router.put("/api/rates/{month}/{currency}")

@@ -1,81 +1,206 @@
-// 「设置」: the tabs, and the account / currency / category lists (rename, delete, drag to reorder).
+// 「设置」: the tabs, the edit lock, and the account / currency / category lists (rename, delete,
+// drag to reorder).
 
+// ---------- edit lock ----------
+// Every tab is read-only until 「✎ 修改」. Edits stay on the page until 「保存」, which lists them
+// for confirmation and saves them together (all or nothing); 「放弃」 drops them. Dragging to
+// reorder is not locked and saves right away.
+// Each tab registers { label, editing(), begin(), end(), changes() -> [text] (throws when
+// something typed is invalid), save() -> Promise, reload() -> Promise }.
+const SET_EDITORS = {};
+let setTab = null;
+let lockMsg = ""; // shown in the bar until the next action
+function lockable(tab, editor) { SET_EDITORS[tab] = editor; }
+function pendingEdits(tab) {
+  const ed = SET_EDITORS[tab];
+  if (!ed?.editing()) return 0;
+  try { return ed.changes().length; } catch { return 1; } // something invalid counts as a change
+}
+function renderLock() {
+  const ed = SET_EDITORS[setTab], bar = $("set-lock");
+  bar.hidden = !ed;
+  if (!ed) return;
+  const msg = lockMsg ? `<span class="lock-msg">${esc(lockMsg)}</span>` : "";
+  if (!ed.editing()) {
+    bar.className = "lockbar";
+    bar.innerHTML = `<span class="lock-state">🔒 只读</span>${msg || `<span class="muted">要修改先点「修改」，改完统一保存</span>`}` +
+      `<button data-lock="edit">✎ 修改${esc(ed.label)}</button>`;
+    return;
+  }
+  let n = 0, problem = "";
+  try { n = ed.changes().length; } catch (e) { problem = e.message; }
+  bar.className = "lockbar editing";
+  bar.innerHTML = `<span class="lock-state">✎ 正在修改${esc(ed.label)}</span>` +
+    (problem ? `<span class="lock-msg warn">${esc(problem)}</span>` : msg || `<span class="muted">${n ? `${n} 处改动，还没保存` : "还没有改动"}</span>`) +
+    `<button class="secondary" data-lock="cancel">${n || problem ? "放弃" : "完成"}</button>` +
+    `<button data-lock="save" ${n && !problem ? "" : "disabled"}>保存${n ? `（${n} 处）` : ""}</button>`;
+}
+// Ends editing `tab`; with unsaved edits, asks first. False: the user wants to keep editing.
+function leaveEdit(tab) {
+  const ed = SET_EDITORS[tab];
+  if (!ed?.editing()) return true;
+  const n = pendingEdits(tab);
+  if (n && !confirm(`「${ed.label}」有 ${n} 处改动还没保存。\n点「确定」放弃这些改动，点「取消」回去接着改。`)) return false;
+  ed.end();
+  lockMsg = n ? "改动已放弃" : "";
+  renderLock();
+  return true;
+}
+async function saveEdits(tab) {
+  const ed = SET_EDITORS[tab];
+  let list;
+  try { list = ed.changes(); } catch (e) { lockMsg = e.message; return renderLock(); }
+  if (!list.length) return;
+  if (!confirm(`保存这 ${list.length} 处改动？\n\n${list.map(t => "· " + t).join("\n")}`)) return;
+  $("set-lock").querySelector('[data-lock="save"]').disabled = true;
+  try {
+    await ed.save();
+  } catch (e) {
+    lockMsg = "没有保存（一处也没改）：" + e.message;
+    return renderLock();
+  }
+  ed.end();
+  lockMsg = `已保存 ${list.length} 处改动`;
+  renderLock();
+  await ed.reload();
+}
+$("set-lock").addEventListener("click", e => {
+  const act = e.target.dataset.lock, ed = SET_EDITORS[setTab];
+  if (!act || !ed) return;
+  lockMsg = "";
+  if (act === "edit") { ed.begin(); renderLock(); }
+  if (act === "cancel") leaveEdit(setTab);
+  if (act === "save") saveEdits(setTab);
+});
+// Called by route() when another page is opened
+const leaveSettings = () => leaveEdit(setTab);
+window.addEventListener("beforeunload", e => { if (pendingEdits(setTab)) e.preventDefault(); });
+
+// ---------- account / currency / category lists ----------
 const LIST_LABELS = { accounts: "账户", currencies: "币种", categories: "种类" };
 let lists = { accounts: [], currencies: [], categories: [] };
+// While a list is being edited: new names by id, ids to delete, names to add, and for accounts
+// the currencies to add / remove by account id
+const listEdit = { accounts: null, currencies: null, categories: null };
 async function loadSettings() {
   try { lists = await api("/api/settings"); } catch (e) { return flash("set-status", "读取失败：" + e.message); }
   for (const kind of Object.keys(LIST_LABELS)) renderList(kind);
   loadOpening();
 }
 function renderList(kind) {
-  const items = lists[kind];
-  $("set-" + kind).innerHTML = items.map(it => {
+  const items = lists[kind], ed = listEdit[kind];
+  const rows = items.map(it => {
+    const gone = ed?.deleted.has(it.id), live = ed && !gone;
     let extra = "";
     if (kind === "accounts") {
-      const have = new Set(it.currencies.map(c => c.name));
+      const rm = ed?.rmCur[it.id] ?? [], add = ed?.addCur[it.id] ?? [];
+      const have = new Set([...it.currencies.map(c => c.name), ...add]);
       const addable = lists.currencies.filter(c => !have.has(c.name));
-      extra = `<td>${it.currencies.map(c =>
-        `<span class="chip">${esc(c.name)}<button data-act="rm-cur" data-cur="${esc(c.name)}" title="${c.used ? `已有 ${c.used} 笔交易，不能去掉` : "去掉这个币种"}" ${c.used ? "disabled" : ""}>×</button></span>`).join("")}` +
-        (addable.length ? `<select class="add-cur" data-act="add-cur"><option value="">＋ 币种</option>${addable.map(c => `<option>${esc(c.name)}</option>`).join("")}</select>` : "") + `</td>`;
+      const chip = c => {
+        const cur = `data-cur="${esc(c.name)}"`;
+        if (!live) return `<span class="chip">${esc(c.name)}</span>`;
+        if (rm.includes(c.name)) return `<span class="chip removed" title="保存后去掉">${esc(c.name)}<button data-act="undo-rm-cur" ${cur} title="撤销">↺</button></span>`;
+        return `<span class="chip">${esc(c.name)}${c.used ? "" : `<button data-act="rm-cur" ${cur} title="去掉这个币种">×</button>`}</span>`;
+      };
+      extra = `<td>${it.currencies.map(chip).join("")}` +
+        add.map(c => `<span class="chip added" title="保存后加上">${esc(c)}<button data-act="undo-add-cur" data-cur="${esc(c)}" title="不加了">×</button></span>`).join("") +
+        (live && addable.length ? `<select class="add-cur" data-act="add-cur"><option value="">＋ 币种</option>${addable.map(c => `<option>${esc(c.name)}</option>`).join("")}</select>` : "") + `</td>`;
     }
-    if (kind === "currencies") {
-      extra = `<td>${it.is_base ? '<span class="tag done">本位币</span>' : ""}</td>`;
-    }
-    return `<tr data-kind="${kind}" data-id="${it.id}">
+    if (kind === "currencies") extra = `<td>${it.is_base ? '<span class="tag done">本位币</span>' : ""}</td>`;
+    const name = live ? `<input data-act="name" value="${esc(ed.names[it.id] ?? it.name)}">` : esc(it.name);
+    const del = !ed ? "" : gone ? `<button class="icon" data-act="undelete" title="撤销删除">↺</button>`
+      : it.used ? "" : `<button class="icon" data-act="delete" title="删除（还没有交易用它）">✕</button>`;
+    return `<tr data-kind="${kind}" data-id="${it.id}" class="${gone ? "deleted" : ""}">
       <td>${items.length > 1 ? `<span class="handle" title="按住拖动调整顺序" aria-label="拖动调整顺序">☰</span>` : ""}</td>
-      <td><input data-act="name" value="${esc(it.name)}"></td>${extra}
-      <td class="num">${it.used}</td>
-      <td>${it.used ? "" : `<button class="icon" data-act="delete" title="删除（还没有交易用它）">✕</button>`}</td></tr>`;
-  }).join("") || `<tr><td colspan="5" class="empty">还没有${LIST_LABELS[kind]}</td></tr>`;
+      <td>${name}</td>${extra}<td class="num">${it.used}</td><td>${del}</td></tr>`;
+  });
+  const added = (ed?.added ?? []).map((n, i) => `<tr class="added"><td></td><td>${esc(n)} <span class="tag">新增</span></td>` +
+    (kind === "accounts" ? `<td class="muted">保存后再加币种</td>` : kind === "currencies" ? "<td></td>" : "") +
+    `<td class="num">0</td><td><button class="icon" data-act="unadd" data-i="${i}" title="不添加了">✕</button></td></tr>`);
+  $("set-" + kind).innerHTML = [...rows, ...added].join("") || `<tr><td colspan="5" class="empty">还没有${LIST_LABELS[kind]}</td></tr>`;
+  $(`set-${kind}-new`).closest(".add-row").hidden = !ed;
 }
-async function listCall(path, opts, done) {
-  try {
-    await api(path, opts);
-    flash("set-status", done);
-  } catch (e) {
-    flash("set-status", "失败：" + e.message);
+// The edits of one list, in the order they are saved: { text (for the confirmation), op }
+function listChanges(kind) {
+  const ed = listEdit[kind], label = LIST_LABELS[kind], items = lists[kind], out = [];
+  for (const it of items) if (ed.deleted.has(it.id))
+    out.push({ text: `删除${label}「${it.name}」`, op: { op: "delete", kind, id: it.id } });
+  for (const it of items) {
+    if (ed.deleted.has(it.id) || !(it.id in ed.names)) continue;
+    const name = ed.names[it.id].trim();
+    if (!name) throw new Error(`${label}「${it.name}」的新名称是空的`);
+    if (name !== it.name) out.push({ text: `${label}「${it.name}」改名为「${name}」${it.used ? `（已有 ${it.used} 笔交易一起改）` : ""}`,
+                                     op: { op: "rename", kind, id: it.id, name } });
   }
-  await loadSettings();
-  loadSuggestions(); // manual entry offers the new lists
+  for (const name of ed.added) out.push({ text: `新增${label}「${name}」`, op: { op: "add", kind, name } });
+  if (kind === "accounts") for (const it of items) {
+    if (ed.deleted.has(it.id)) continue;
+    for (const c of ed.addCur[it.id] ?? []) out.push({ text: `「${it.name}」加上币种${c}`, op: { op: "add_currency", id: it.id, name: c } });
+    for (const c of ed.rmCur[it.id] ?? []) out.push({ text: `「${it.name}」去掉币种${c}`, op: { op: "remove_currency", id: it.id, name: c } });
+  }
+  return out;
+}
+for (const kind of Object.keys(LIST_LABELS)) lockable(kind, {
+  label: LIST_LABELS[kind],
+  editing: () => !!listEdit[kind],
+  begin() { listEdit[kind] = { names: {}, deleted: new Set(), added: [], addCur: {}, rmCur: {} }; renderList(kind); },
+  end() { listEdit[kind] = null; renderList(kind); },
+  changes: () => listChanges(kind).map(c => c.text),
+  save: () => api("/api/settings/batch", send("POST", { ops: listChanges(kind).map(c => c.op) })),
+  async reload() { await loadSettings(); loadSuggestions(); }, // manual entry offers the new lists
+});
+
+function stageAdd(kind) {
+  const input = $(`set-${kind}-new`), ed = listEdit[kind], name = input.value.trim();
+  if (!ed) return;
+  if (!name) return input.focus();
+  if (lists[kind].some(it => it.name === name && !ed.deleted.has(it.id)) || ed.added.includes(name)) {
+    lockMsg = `已经有${LIST_LABELS[kind]}「${name}」了`;
+    return renderLock();
+  }
+  ed.added.push(name);
+  input.value = "";
+  input.focus();
+  lockMsg = "";
+  renderList(kind);
+  renderLock();
 }
 const findItem = tr => lists[tr.dataset.kind].find(x => x.id === +tr.dataset.id);
 $("view-settings").addEventListener("click", e => {
   const add = e.target.dataset.add;
-  if (add) {
-    const input = $(`set-${add}-new`);
-    if (!input.value.trim()) return input.focus();
-    listCall(`/api/settings/${add}`, send("POST", { name: input.value }), `已添加${LIST_LABELS[add]}「${input.value.trim()}」`)
-      .then(() => { input.value = ""; input.focus(); });
-    return;
-  }
-  const act = e.target.dataset.act, tr = e.target.closest("tr[data-kind]");
-  if (!act || !tr) return;
-  const { kind } = tr.dataset, it = findItem(tr);
-  if (act === "delete") {
-    if (confirm(`删除${LIST_LABELS[kind]}「${it.name}」？`))
-      listCall(`/api/settings/${kind}/${it.id}`, { method: "DELETE" }, `已删除「${it.name}」`);
-  } else if (act === "rm-cur") {
-    listCall(`/api/settings/accounts/${it.id}/currencies/${encodeURIComponent(e.target.dataset.cur)}`, { method: "DELETE" },
-      `「${it.name}」已去掉${e.target.dataset.cur}`);
-  }
+  if (add) return stageAdd(add);
+  const act = e.target.dataset.act, tr = e.target.closest("tr");
+  const kind = tr?.closest("tbody")?.id.replace(/^set-/, ""), ed = listEdit[kind];
+  if (!act || !ed) return;
+  const it = tr.dataset.kind ? findItem(tr) : null, cur = e.target.dataset.cur;
+  const drop = (arr, v) => arr.filter(x => x !== v);
+  if (act === "delete") ed.deleted.add(it.id);
+  else if (act === "undelete") ed.deleted.delete(it.id);
+  else if (act === "unadd") ed.added.splice(+e.target.dataset.i, 1);
+  else if (act === "rm-cur") (ed.rmCur[it.id] ??= []).push(cur);
+  else if (act === "undo-rm-cur") ed.rmCur[it.id] = drop(ed.rmCur[it.id], cur);
+  else if (act === "undo-add-cur") ed.addCur[it.id] = drop(ed.addCur[it.id], cur);
+  else return;
+  lockMsg = "";
+  renderList(kind);
+  renderLock();
+});
+$("view-settings").addEventListener("input", e => {
+  const tr = e.target.closest("tr[data-kind]");
+  if (e.target.dataset.act !== "name" || !tr || !listEdit[tr.dataset.kind]) return;
+  listEdit[tr.dataset.kind].names[tr.dataset.id] = e.target.value;
+  lockMsg = "";
+  renderLock();
 });
 $("view-settings").addEventListener("change", e => {
-  const act = e.target.dataset.act, tr = e.target.closest("tr[data-kind]");
-  if (!act || !tr) return;
-  const { kind } = tr.dataset, it = findItem(tr);
-  const patch = (body, done) => listCall(`/api/settings/${kind}/${it.id}`, send("PATCH", body), done);
-  if (act === "name") {
-    const name = e.target.value.trim();
-    if (!name || name === it.name) { e.target.value = it.name; return; }
-    if (it.used && !confirm(`把${LIST_LABELS[kind]}「${it.name}」改名为「${name}」？\n已有 ${it.used} 笔交易会一起改。`)) {
-      e.target.value = it.name;
-      return;
-    }
-    patch({ name }, `已改名为「${name}」`);
-  } else if (act === "add-cur" && e.target.value) {
-    listCall(`/api/settings/accounts/${it.id}/currencies`, send("POST", { name: e.target.value }),
-      `「${it.name}」已加上${e.target.value}`);
-  }
+  const tr = e.target.closest("tr[data-kind]");
+  if (e.target.dataset.act !== "add-cur" || !e.target.value || !tr) return;
+  const ed = listEdit.accounts;
+  if (!ed) return;
+  (ed.addCur[tr.dataset.id] ??= []).push(e.target.value);
+  lockMsg = "";
+  renderList("accounts");
+  renderLock();
 });
 // Drag the ☰ handle to reorder: the row follows the pointer; the new order is saved on release
 let drag = null;
@@ -92,19 +217,29 @@ $("view-settings").addEventListener("pointerdown", e => {
 });
 $("view-settings").addEventListener("pointermove", e => {
   if (!drag) return;
-  // Put the row before the first other row whose middle is below the pointer
+  // Put the row before the first other row whose middle is below the pointer (rows being
+  // added stay at the end)
   const others = [...drag.tbody.querySelectorAll("tr[data-kind]")].filter(r => r !== drag.tr);
   const next = others.find(r => { const b = r.getBoundingClientRect(); return e.clientY < b.top + b.height / 2; });
-  if (next !== drag.tr.nextElementSibling) drag.tbody.insertBefore(drag.tr, next ?? null);
+  const at = next ?? drag.tbody.querySelector("tr.added");
+  if (at !== drag.tr.nextElementSibling) drag.tbody.insertBefore(drag.tr, at);
 });
-function endDrag() {
+async function endDrag() {
   if (!drag) return;
   const { tr, tbody, kind, before } = drag;
   drag = null;
   tr.classList.remove("dragging");
   document.body.classList.remove("reordering");
   const ids = rowIds(tbody);
-  if (ids.join() !== before) listCall(`/api/settings/${kind}/order`, send("POST", { ids }), "顺序已保存");
+  if (ids.join() === before) return;
+  try {
+    await api(`/api/settings/${kind}/order`, send("POST", { ids }));
+    flash("set-status", "顺序已保存");
+  } catch (e) {
+    flash("set-status", "顺序没有保存：" + e.message);
+  }
+  await loadSettings(); // edits in progress are kept: they are rendered again from listEdit
+  loadSuggestions();
 }
 $("view-settings").addEventListener("pointerup", endDrag);
 $("view-settings").addEventListener("pointercancel", endDrag);
@@ -112,17 +247,20 @@ $("view-settings").addEventListener("pointercancel", endDrag);
 $("view-settings").addEventListener("keydown", e => {
   if (e.key !== "Enter" || e.isComposing) return;
   const kind = e.target.id?.match(/^set-(\w+)-new$/)?.[1];
-  if (kind) document.querySelector(`[data-add="${kind}"]`).click();
+  if (kind) stageAdd(kind);
   else if (e.target.dataset.act === "name") e.target.blur();
 });
 
-// One tab at a time, remembered
+// ---------- tabs: one at a time, remembered ----------
 const SET_TABS = ["accounts", "currencies", "categories", "opening", "rates", "email"];
 function showSetTab(tab) {
   if (!SET_TABS.includes(tab)) tab = "accounts";
+  if (tab !== setTab && !leaveEdit(setTab)) return; // unsaved edits and the user stays
+  setTab = tab;
+  lockMsg = "";
   save("tx.settings.tab", tab);
   for (const el of document.querySelectorAll("[data-set-panel]")) el.hidden = !el.dataset.setPanel.split(" ").includes(tab);
   for (const b of document.querySelectorAll("#set-tabs button")) b.classList.toggle("active", b.dataset.setTab === tab);
+  renderLock();
 }
 $("set-tabs").addEventListener("click", e => { const b = e.target.closest("[data-set-tab]"); if (b) showSetTab(b.dataset.setTab); });
-showSetTab(load("tx.settings.tab"));

@@ -17,6 +17,24 @@ class NameBody(BaseModel):
     name: str
 
 
+class ListOp(BaseModel):
+    op: str
+    kind: str = "accounts"
+    id: int | None = None
+    name: str | None = None
+
+
+class ListOps(BaseModel):
+    ops: list[ListOp]
+
+
+@router.post("/batch")
+def edit_lists(body: ListOps):
+    """Several edits saved together: all or nothing (see lists.apply)."""
+    lists.apply([o.model_dump() for o in body.ops])
+    return {"ok": True}
+
+
 @router.post("/{kind}")
 def add_list_item(kind: str, body: NameBody):
     return {"id": lists.add(kind, body.name)}

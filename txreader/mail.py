@@ -26,7 +26,7 @@ from urllib.parse import urlencode
 
 import httpx
 
-from .db import connect, now
+from .db import connect, now, transaction
 from .errors import NotFound
 
 AUTHORIZE_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
@@ -264,6 +264,22 @@ def delete_rule(rule_id: int) -> None:
     with connect() as conn:
         if not conn.execute("DELETE FROM email_rules WHERE id = ?", (rule_id,)).rowcount:
             raise NotFound(rule_id)
+
+
+def save_settings(credentials: dict | None, add: list[dict], update: dict[int, dict], delete: list[int]) -> None:
+    """The settings page's edits, saved together (all or nothing): credentials
+    ({"client_id", "client_secret", "redirect_uri"} as set_credentials takes them), new rules,
+    {rule id: changed fields}, rules to delete."""
+    with transaction():
+        if credentials is not None:
+            set_credentials(credentials.get("client_id"), credentials.get("client_secret"),
+                            credentials.get("redirect_uri"))
+        for rule_id in delete:
+            delete_rule(rule_id)
+        for rule_id, fields in update.items():
+            update_rule(rule_id, fields)
+        for fields in add:
+            add_rule(fields)
 
 
 # ---------- recognizing one email ----------

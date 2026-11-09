@@ -16,7 +16,6 @@
       <a href="#transactions" data-view="transactions">交易</a>
       <a href="#monthly" data-view="monthly">收支</a>
       <a href="#balances" data-view="balances">结余</a>
-      <a href="#export" data-view="export">导出</a>
       <a href="#settings" data-view="settings">设置</a>
       <a href="#security" data-view="security">登录记录</a>
     </nav>
@@ -161,11 +160,11 @@
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>日期</th><th>曜日</th><th>账户</th><th>币种</th><th class="num">金额</th><th>种类</th><th>描述</th><th>导出</th></tr></thead>
+          <thead><tr><th>日期</th><th>曜日</th><th>账户</th><th>币种</th><th class="num">金额</th><th>种类</th><th>描述</th></tr></thead>
           <tbody id="tx-rows"></tbody>
         </table>
       </div>
-      <div class="bar"><span id="tx-status" class="status"></span></div>
+      <div class="bar"><button id="tx-export" class="secondary" title="把上面列出的交易导出成 CSV">导出 CSV</button><span id="tx-status" class="status"></span></div>
       <div class="legend">截图识别、邮件导入的交易点一行可以查看原截图 / 原邮件。入库后只能修改种类和描述，改完自动保存</div>
     </div>
   </section>
@@ -204,6 +203,7 @@
       <select id="bal-month" aria-label="月份"></select>
       <button class="secondary" id="bal-next" title="下个月">›</button>
       <span id="bal-status" class="status"></span>
+      <label class="toggle"><input type="checkbox" id="bal-hide-quiet" checked>只显示这个月有交易或有余额的账户</label>
     </div>
     <div id="bal-warn"></div>
     <div id="bal-tiles"></div>
@@ -214,42 +214,7 @@
         <tbody id="bal-rows"></tbody>
         <tbody id="bal-foot" class="foot"></tbody>
       </table></div>
-      <div class="legend">结余 = 期初余额 + 起始月之后的交易。汇差盈亏 = 上月底存量 ×（本月汇率 − 上月汇率）。「—」表示这个账户没有这个币种</div>
-    </div>
-  </section>
-
-  <!-- ===== 导出 ===== -->
-  <section id="view-export" hidden>
-    <div class="card settings">
-      <label>添加方式<select id="ex-source"></select></label>
-      <label>从<input id="ex-from" type="date"></label>
-      <label>到<input id="ex-to" type="date"></label>
-      <label>显示<select id="ex-show">
-        <option value="all">全部</option>
-        <option value="new">只看未导出</option>
-      </select></label>
-    </div>
-    <div class="card">
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th><input type="checkbox" id="ex-check-all" title="全选"></th><th>日期</th><th>曜日</th><th>账户</th><th>币种</th><th class="num">金额</th><th>种类</th><th>描述</th><th>导出过</th></tr></thead>
-          <tbody id="ex-rows"></tbody>
-        </table>
-      </div>
-      <div class="bar">
-        <button id="ex-go">导出 CSV</button>
-        <span id="ex-status" class="status"></span>
-      </div>
-      <div class="legend">默认勾选还没导出过的交易；导出过的也可以再勾选导出</div>
-    </div>
-    <div class="card">
-      <h2>导出记录</h2>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>时间</th><th>文件名</th><th class="num">条数</th></tr></thead>
-          <tbody id="ex-history"></tbody>
-        </table>
-      </div>
+      <div class="legend">结余 = 期初余额 + 起始月之后的交易。汇差盈亏 = 上月底存量 ×（本月汇率 − 上月汇率）。「—」表示这个账户没有这个币种。隐藏的账户也算在合计里</div>
     </div>
   </section>
 
@@ -263,6 +228,7 @@
      <button data-set-tab="rates" role="tab">月汇率</button>
      <button data-set-tab="email" role="tab">邮件</button>
    </div>
+    <div id="set-lock" class="lockbar" hidden></div>
     <div class="card" data-set-panel="accounts">
       <h2>账户</h2>
       <p class="settings-help">每个账户可以有多个币种（比如现金同时有日元和人民币）。手动输入时按这里的顺序提示</p>
@@ -290,7 +256,7 @@
       </table></div>
       <div class="add-row"><input id="set-categories-new" placeholder="新种类名称"><button class="secondary" data-add="categories">添加种类</button></div>
     </div>
-    <div class="legend" data-set-panel="accounts currencies categories">按住左边的 ☰ 上下拖动调整顺序。改名会把已有交易里的名称一起改掉；有交易在用的不能删除。<span id="set-status" class="status"></span></div>
+    <div class="legend" data-set-panel="accounts currencies categories">按住左边的 ☰ 上下拖动调整顺序（不用先点「修改」，松手就保存）。改名会把已有交易里的名称一起改掉；有交易在用的不能删除。<span id="set-status" class="status"></span></div>
     <div class="card" id="opening-card" data-set-panel="opening">
       <h2>期初余额</h2>
       <p class="settings-help">填起始月月底时每个账户、每个币种的实际余额。之后每个月的结余 = 上月底结余 + 本月的交易，起始月和之前的交易不再计入。账户没有的币种，先在「账户」标签里加上</p>
@@ -309,11 +275,11 @@
         <tbody id="fx-rows"></tbody>
       </table></div>
       <div class="bar"><span id="fx-status" class="status"></span></div>
-      <div class="legend">黄色是还没填的。改完离开输入框就会保存；清空即删除这个月的汇率。汇差盈亏 = 上月底存量 ×（本月汇率 − 上月汇率）</div>
+      <div class="legend">黄色是还没填的；清空即删除这个月的汇率。汇差盈亏 = 上月底存量 ×（本月汇率 − 上月汇率）</div>
     </div>
     <div class="card" data-set-panel="email">
       <h2>连接 Outlook</h2>
-      <p class="settings-help">在 Azure 门户的「应用注册」里建一个应用：平台选「Web」，加一个重定向 URI；API 权限加上 Microsoft Graph 的 Mail.Read 和 offline_access（委托）；再新建一个客户端密码。把「应用程序（客户端）ID」、密码的「值」和重定向 URI 填在这里，保存后点「连接 Outlook」登录邮箱，或者在下面直接填 refresh token</p>
+      <p class="settings-help">在 Azure 门户的「应用注册」里建一个应用：平台选「Web」，加一个重定向 URI；API 权限加上 Microsoft Graph 的 Mail.Read 和 offline_access（委托）；再新建一个客户端密码。把「应用程序（客户端）ID」、密码的「值」和重定向 URI 填在这里，保存后再点「连接 Outlook」登录邮箱，或者在下面直接填 refresh token</p>
       <div class="settings">
         <label>Client ID<input id="em-client-id" autocomplete="off" spellcheck="false"></label>
         <label>Client secret<input id="em-secret" type="password" autocomplete="new-password"></label>
@@ -321,7 +287,6 @@
       </div>
       <p class="settings-help">回调地址空着就用 <code id="em-redirect"></code>。Azure 里 http 只允许 localhost；已经注册过 <code>http://localhost:8000</code> 的话直接填它也行（首页会把授权码转过来）</p>
       <div class="bar">
-        <button id="em-save-cred" class="secondary">保存</button>
         <button id="em-connect">连接 Outlook</button>
         <button id="em-disconnect" class="danger">断开</button>
         <span id="em-conn" class="status"></span>
@@ -334,7 +299,7 @@
     </div>
     <div class="card" data-set-panel="email">
       <h2>邮件规则</h2>
-      <p class="settings-help">一种通知邮件一条规则：发件人一致（写成 @域名 表示这个域名下的所有地址）、标题包含关键词（空着表示不限）的邮件才会读。三个正则各有一对括号，括号里的部分就是取出来的值；金额一律记为支出。改完离开输入框就会保存</p>
+      <p class="settings-help">一种通知邮件一条规则：发件人一致（写成 @域名 表示这个域名下的所有地址）、标题包含关键词（空着表示不限）的邮件才会读。三个正则各有一对括号，括号里的部分就是取出来的值；金额一律记为支出</p>
       <div id="em-rules"></div>
       <div class="bar"><button id="em-add-rule" class="secondary">＋ 添加规则</button><span id="em-status" class="status"></span></div>
     </div>
@@ -392,7 +357,6 @@
 <script src="/static/js/transactions.js"></script>
 <script src="/static/js/monthly.js"></script>
 <script src="/static/js/balances.js"></script>
-<script src="/static/js/export.js"></script>
 <script src="/static/js/settings.js"></script>
 <script src="/static/js/opening.js"></script>
 <script src="/static/js/rates.js"></script>

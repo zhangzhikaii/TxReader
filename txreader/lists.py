@@ -4,7 +4,7 @@ and the edits made on the settings page.
 Transactions keep the names as text (so the CSV export stays the same); renaming an item
 renames it in the transactions too.
 """
-from .db import default_base, connect, now
+from .db import default_base, connect, now, transaction
 from .errors import NotFound
 
 KINDS = {"accounts": "account", "currencies": "currency", "categories": "category"}  # table -> transactions column
@@ -192,3 +192,21 @@ def remove_account_currency(account_id: int, currency: str) -> None:
             raise ValueError(f"「{a['name']}」填了{currency}的期初余额，不能去掉这个币种（先清空期初余额）")
         conn.execute("DELETE FROM account_currencies WHERE account_id = ?"
                      " AND currency_id = (SELECT id FROM currencies WHERE name = ?)", (account_id, currency))
+
+
+def apply(ops: list[dict]) -> None:
+    """The settings page's edits of one list, saved together: all or nothing. Each op is
+    {"op": "add", "kind", "name"}, {"op": "rename", "kind", "id", "name"}, {"op": "delete", "kind", "id"},
+    {"op": "add_currency", "id" (account), "name"} or {"op": "remove_currency", "id", "name"}."""
+    actions = {
+        "add": lambda o: add(o["kind"], o.get("name")),
+        "rename": lambda o: update(o["kind"], o["id"], {"name": o.get("name")}),
+        "delete": lambda o: delete(o["kind"], o["id"]),
+        "add_currency": lambda o: add_account_currency(o["id"], o.get("name")),
+        "remove_currency": lambda o: remove_account_currency(o["id"], o.get("name")),
+    }
+    with transaction():
+        for o in ops:
+            if o.get("op") not in actions:
+                raise ValueError(f"不认识的操作：{o.get('op')}")
+            actions[o["op"]](o)

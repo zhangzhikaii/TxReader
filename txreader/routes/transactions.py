@@ -1,6 +1,4 @@
 """Kept transactions: listing, typing in by hand, editing, exporting."""
-import re
-from urllib.parse import quote
 
 from fastapi import APIRouter
 from fastapi.responses import Response
@@ -14,8 +12,17 @@ router = APIRouter()
 @router.get("/api/transactions")
 def transactions(source: str | None = None, date_from: str | None = None, date_to: str | None = None,
                  account: str | None = None, currency: str | None = None, category: str | None = None):
-    """source: a screenshot source key, or "manual"."""
+    """source: a screenshot source key, "email", or "manual"."""
     return {"transactions": store.list_transactions(source, date_from, date_to, account, currency, category)}
+
+
+@router.get("/api/transactions/export")
+def export(source: str | None = None, date_from: str | None = None, date_to: str | None = None,
+           account: str | None = None, currency: str | None = None, category: str | None = None):
+    """The transactions the same filters list, as CSV."""
+    rows = store.list_transactions(source, date_from, date_to, account, currency, category)
+    return Response(store.export_csv(rows).encode("utf-8"), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="txreader.csv"'})
 
 
 class TransactionFields(BaseModel):
@@ -53,21 +60,3 @@ def edit_transaction(tx_id: int, body: TransactionEdit):
 @router.get("/api/suggestions")
 def suggestions():
     return store.suggestions()
-
-
-class ExportBody(BaseModel):
-    ids: list[int]
-    filename: str = ""
-
-
-@router.post("/api/exports")
-def export(body: ExportBody):
-    name = body.filename if re.fullmatch(r"[\w.-]{1,100}\.csv", body.filename) else "txreader.csv"
-    csv = store.create_export(body.ids, name)
-    return Response(csv.encode("utf-8"), media_type="text/csv; charset=utf-8",
-                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
-
-
-@router.get("/api/exports")
-def exports():
-    return {"exports": store.list_exports()}

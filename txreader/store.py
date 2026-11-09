@@ -239,14 +239,11 @@ def list_transactions(source: str | None = None, date_from: str | None = None,
         args.append(date_to.replace("-", "/"))
     with connect() as conn:
         rows = conn.execute(
-            "SELECT t.*, r.source, r.image_id, r.email_id, i.filename AS image_name,"
-            " COUNT(e.id) AS export_count, MAX(e.at) AS last_export"
+            "SELECT t.*, r.source, r.image_id, r.email_id, i.filename AS image_name"
             " FROM transactions t LEFT JOIN ocr_rows r ON r.id = t.ocr_row_id"
             " LEFT JOIN images i ON i.id = r.image_id"
-            " LEFT JOIN export_items ei ON ei.transaction_id = t.id"
-            " LEFT JOIN exports e ON e.id = ei.export_id"
             + (" WHERE " + " AND ".join(where) if where else "") +
-            " GROUP BY t.id ORDER BY t.date, r.image_id, r.pos DESC, t.id",
+            " ORDER BY t.date, r.image_id, r.pos DESC, t.id",
             args).fetchall()
     return [dict(r) for r in rows]
 
@@ -341,9 +338,10 @@ def image_file(image_id: int) -> tuple[str, str]:
     return r["path"], r["filename"]
 
 
-# ---------- exports ----------
+# ---------- export ----------
 
-def _csv(rows) -> str:
+def export_csv(rows: list[dict]) -> str:
+    """CSV text of these transactions (as list_transactions returns them)."""
     def cell(v):
         v = str(v)
         return '"' + v.replace('"', '""') + '"' if re.search(r'[",\n]', v) else v
@@ -351,28 +349,4 @@ def _csv(rows) -> str:
         [r["date"], r["weekday"], r["account"], r["currency"], f"{r['amount']:.2f}", r["category"], r["description"]]
         for r in rows]
     # BOM so Excel reads it as UTF-8
-    return "﻿" + "".join(",".join(cell(v) for v in line) + "\r\n" for line in lines)
-
-
-def create_export(ids: list[int], filename: str) -> str:
-    """Record an export of these transactions and return the CSV text."""
-    if not ids:
-        raise ValueError("没有选择要导出的交易")
-    with connect() as conn:
-        rows = conn.execute(
-            f"SELECT t.* FROM transactions t JOIN ocr_rows r ON r.id = t.ocr_row_id"
-            f" WHERE t.id IN ({','.join('?' * len(ids))}) ORDER BY t.date, r.image_id, r.pos DESC",
-            ids).fetchall()
-        if len(rows) != len(set(ids)):
-            raise NotFound("transactions")
-        export_id = conn.execute("INSERT INTO exports (at, filename, count) VALUES (?, ?, ?) RETURNING id",
-                                 (now(), filename, len(rows))).fetchone()[0]
-        conn.executemany("INSERT INTO export_items (export_id, transaction_id) VALUES (?, ?)",
-                         [(export_id, r["id"]) for r in rows])
-    return _csv(rows)
-
-
-def list_exports(limit: int = 50) -> list[dict]:
-    with connect() as conn:
-        return [dict(r) for r in conn.execute(
-            "SELECT id, at, filename, count FROM exports ORDER BY id DESC LIMIT ?", (limit,))]
+    return "\ufeff" + "".join(",".join(cell(v) for v in line) + "\r\n" for line in lines)

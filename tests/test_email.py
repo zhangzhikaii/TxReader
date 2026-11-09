@@ -131,6 +131,27 @@ def test_rules_are_checked(client):
     assert t["row"] is None and t["problem"] == "没找到日期"
 
 
+def test_settings_saved_together(client):
+    rid = client.post("/api/email/rules", json=RULE).json()["id"]
+    rules = lambda: client.get("/api/email").json()["rules"]
+    # A bad regex in a new rule: the other edits aren't saved either
+    r = client.put("/api/email/settings", json={
+        "credentials": {"client_id": "cid", "client_secret": "s"},
+        "update_rules": [{"id": rid, "fields": {"category": "日用品"}}],
+        "add_rules": [{**RULE, "date_re": "([0-9"}]})
+    assert r.status_code == 400
+    assert client.get("/api/email").json()["client_id"] == "" and rules()[0]["category"] == "饮食费"
+
+    assert client.put("/api/email/settings", json={
+        "credentials": {"client_id": "cid", "client_secret": "s"},
+        "update_rules": [{"id": rid, "fields": {"category": "日用品"}}],
+        "add_rules": [{**RULE, "sender": "@other.example"}]}).is_success
+    assert client.get("/api/email").json()["client_id"] == "cid"
+    assert [(r["sender"], r["category"]) for r in rules()] == [("notice@card.example", "日用品"), ("@other.example", "饮食费")]
+    assert client.put("/api/email/settings", json={"delete_rules": [rid]}).is_success
+    assert [r["sender"] for r in rules()] == ["@other.example"]
+
+
 def test_fetch_review_confirm(client):
     assert client.post("/api/email/fetch", json={}).status_code == 400  # no rules yet
     client.post("/api/email/rules", json=RULE)

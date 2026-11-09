@@ -1,4 +1,6 @@
-// 「设置 › 邮件」: Outlook sign-in and the email rules.
+// 「设置 › 邮件」: Outlook sign-in and the email rules (locked until 「✎ 修改」, see settings.js).
+// The app's credentials and the rules are saved together; signing in, pasting a refresh token
+// and disconnecting act right away, but only while the tab is unlocked.
 
 const RULE_LABELS = { account: "账户", currency: "币种", category: "种类", sender: "发件人", subject: "标题包含",
                       date_re: "日期（正则）", merchant_re: "描述（正则）", amount_re: "金额（正则）" };
@@ -6,55 +8,118 @@ const RULE_LABELS = { account: "账户", currency: "币种", category: "种类",
 const NEW_RULE = { account: "", currency: "日元", category: "饮食费", sender: "", subject: "",
                    date_re: String.raw`利用日時\s+([0-9/:\s]+)`, merchant_re: String.raw`利用店舗\s+([^\n]+)`,
                    amount_re: String.raw`利用金額\s+([0-9,]+)円` };
-let emailRules = [];
-let draftRule = null; // the rule being added, not saved yet
+let emCfg = null;
+// While editing: typed credentials (undefined: untouched), typed rule fields by rule id,
+// rule ids to delete, new rules
+let emEdit = null;
 async function loadEmailSettings() {
-  let cfg;
-  try { cfg = await api("/api/email"); } catch (e) { return flash("em-status", "读取失败：" + e.message); }
-  $("em-redirect").textContent = cfg.default_redirect_uri;
-  if (document.activeElement !== $("em-redirect-uri")) $("em-redirect-uri").value = cfg.redirect_uri;
-  $("em-redirect-uri").placeholder = cfg.default_redirect_uri;
-  if (document.activeElement !== $("em-client-id")) $("em-client-id").value = cfg.client_id;
-  $("em-secret").value = "";
-  $("em-secret").placeholder = cfg.has_secret ? "已保存（不显示）；要换就填新的" : "";
-  $("em-connect").textContent = cfg.connected ? "重新连接" : "连接 Outlook";
-  $("em-connect").disabled = $("em-save-token").disabled = !cfg.client_id || !cfg.has_secret;
-  $("em-disconnect").hidden = !cfg.connected;
-  if (!$("em-conn").dataset.msg) $("em-conn").textContent = cfg.connected ? "✓ 已连接" : (cfg.client_id && cfg.has_secret ? "还没连接" : "先填 Client ID 和 Client secret");
-  emailRules = cfg.rules;
+  try { emCfg = await api("/api/email"); } catch (e) { return flash("em-status", "读取失败：" + e.message); }
+  renderEmail();
+}
+const CRED_INPUTS = { client_id: "em-client-id", secret: "em-secret", redirect: "em-redirect-uri" };
+const credTyped = k => emEdit?.cred[k];
+function credChanges() {
+  const out = [];
+  const id = credTyped("client_id")?.trim(), redirect = credTyped("redirect")?.trim(), secret = credTyped("secret")?.trim();
+  if (id !== undefined && id !== emCfg.client_id)
+    out.push(`Client ID 改为「${id}」${emCfg.connected ? "（会断开 Outlook，要重新连接）" : ""}`);
+  if (secret) out.push("换一个 Client secret");
+  if (redirect !== undefined && redirect !== emCfg.redirect_uri)
+    out.push(redirect ? `回调地址改为「${redirect}」` : "回调地址改回默认");
+  return out;
+}
+function renderEmail() {
+  if (!emCfg) return;
+  renderCredentials();
   renderRules();
 }
-function ruleFields(r, key) {
-  const input = (k, extra = "") => `<label>${RULE_LABELS[k]}<input data-rule="${key}" data-k="${k}" value="${esc(r[k])}" spellcheck="false" ${extra}></label>`;
+function renderCredentials() {
+  const cfg = emCfg, locked = !emEdit;
+  $("em-redirect").textContent = cfg.default_redirect_uri;
+  $("em-redirect-uri").placeholder = cfg.default_redirect_uri;
+  const saved = { client_id: cfg.client_id, secret: "", redirect: cfg.redirect_uri };
+  for (const [k, id] of Object.entries(CRED_INPUTS)) {
+    if (document.activeElement !== $(id)) $(id).value = credTyped(k) ?? saved[k];
+    $(id).disabled = locked;
+  }
+  $("em-secret").placeholder = cfg.has_secret ? "已保存（不显示）；要换就填新的" : "";
+  const unsaved = credChanges().length > 0;
+  $("em-connect").textContent = cfg.connected ? "重新连接" : "连接 Outlook";
+  $("em-connect").disabled = $("em-save-token").disabled = locked || unsaved || !cfg.client_id || !cfg.has_secret;
+  $("em-connect").title = unsaved ? "先保存 Client ID / secret / 回调地址" : "";
+  $("em-disconnect").hidden = !cfg.connected;
+  $("em-disconnect").disabled = $("em-token").disabled = locked;
+  if (!$("em-conn").dataset.msg) $("em-conn").textContent = cfg.connected ? "✓ 已连接" : (cfg.client_id && cfg.has_secret ? "还没连接" : "先填 Client ID 和 Client secret");
+}
+function ruleFields(r, key, typed = {}) {
+  const dis = !emEdit || emEdit.deleted.has(key) ? "disabled" : "";
+  const input = (k, extra = "") => `<label>${RULE_LABELS[k]}<input data-rule="${key}" data-k="${k}" value="${esc(typed[k] ?? r[k])}" spellcheck="false" ${dis} ${extra}></label>`;
   return `<div class="settings">${input("account", 'list="m-accounts"')}${input("currency")}${input("category", 'list="m-categories"')}` +
     `${input("sender", 'placeholder="notice@example.com 或 @example.com"')}${input("subject", 'placeholder="空着表示不限"')}</div>` +
     `<div class="patterns">${input("date_re")}${input("merchant_re")}${input("amount_re")}</div>`;
 }
 function renderRules() {
-  $("em-rules").innerHTML = emailRules.map((r, i) => `<div class="rule">
-      ${ruleFields(r, r.id)}
-      <div class="bar"><span class="status">规则 ${i + 1} · 已读 ${r.emails} 封邮件</span>
-        <button class="danger" data-rule-del="${r.id}">删除规则</button></div></div>`).join("") +
-    (draftRule ? `<div class="rule draft">${ruleFields(draftRule, "new")}
-      <div class="bar"><button data-rule-save>保存规则</button><button class="secondary" data-rule-cancel>取消</button></div></div>` : "") ||
+  const rules = emCfg.rules;
+  $("em-rules").innerHTML = rules.map((r, i) => {
+    const gone = emEdit?.deleted.has(r.id);
+    const btn = !emEdit ? "" : gone ? `<button class="secondary" data-rule-undel="${r.id}">↺ 撤销删除</button>`
+                                    : `<button class="danger" data-rule-del="${r.id}">删除规则</button>`;
+    return `<div class="rule ${gone ? "deleted" : ""}">${ruleFields(r, r.id, emEdit?.rules[r.id])}
+      <div class="bar"><span class="status">规则 ${i + 1} · 已读 ${r.emails} 封邮件${gone ? " · 保存后删除" : ""}</span>${btn}</div></div>`;
+  }).join("") +
+    (emEdit?.added ?? []).map((r, i) => `<div class="rule draft">${ruleFields(r, "new" + i)}
+      <div class="bar"><span class="status">新规则（保存后添加）</span><button class="secondary" data-rule-unadd="${i}">不添加了</button></div></div>`).join("") ||
     `<div class="empty">还没有规则</div>`;
-  $("em-add-rule").hidden = !!draftRule;
+  $("em-add-rule").hidden = !emEdit;
   const keep = $("em-test-rule").value;
-  $("em-test-rule").innerHTML = emailRules.map((r, i) => `<option value="${r.id}">规则 ${i + 1}：${esc(r.sender)}</option>`).join("") +
-    (draftRule ? `<option value="new">新规则（未保存）</option>` : "");
+  $("em-test-rule").innerHTML = rules.map((r, i) => `<option value="${r.id}">规则 ${i + 1}：${esc(r.sender)}</option>`).join("") +
+    (emEdit?.added ?? []).map((r, i) => `<option value="new${i}">新规则 ${i + 1}（未保存）</option>`).join("");
   if ([...$("em-test-rule").options].some(o => o.value === keep)) $("em-test-rule").value = keep;
 }
-$("em-save-cred").onclick = async () => {
-  const secret = $("em-secret").value.trim();
-  try {
-    await api("/api/email/credentials", send("PUT", { client_id: $("em-client-id").value.trim(), client_secret: secret || null,
-                                                       redirect_uri: $("em-redirect-uri").value.trim() }));
-    flash("em-status", "");
+// Rule edits: { text, ... } in the order they are saved
+function ruleChanges() {
+  const out = [];
+  emCfg.rules.forEach((r, i) => {
+    if (emEdit.deleted.has(r.id)) return out.push({ text: `删除规则 ${i + 1}（${r.sender}）`, del: r.id });
+    const fields = {};
+    for (const [k, v] of Object.entries(emEdit.rules[r.id] ?? {})) {
+      if (v.trim() === (r[k] ?? "")) continue;
+      fields[k] = v;
+      out.push({ text: `规则 ${i + 1} 的${RULE_LABELS[k]}：「${r[k]}」→「${v.trim()}」` });
+    }
+    if (Object.keys(fields).length) out.push({ update: { id: r.id, fields } });
+  });
+  for (const r of emEdit.added) out.push({ text: `新增规则（发件人「${r.sender.trim() || "未填"}」）`, add: r });
+  return out;
+}
+lockable("email", {
+  label: "邮件设置",
+  editing: () => !!emEdit,
+  begin() { if (emCfg) { emEdit = { cred: {}, rules: {}, deleted: new Set(), added: [] }; renderEmail(); } },
+  end() { emEdit = null; renderEmail(); },
+  changes: () => [...credChanges(), ...ruleChanges().filter(c => c.text).map(c => c.text)],
+  save() {
+    const body = {}, rules = ruleChanges();
+    if (credChanges().length) body.credentials = {
+      client_id: (credTyped("client_id") ?? emCfg.client_id).trim(),
+      client_secret: credTyped("secret")?.trim() || null,
+      redirect_uri: credTyped("redirect")?.trim() ?? null,
+    };
+    body.delete_rules = rules.filter(c => c.del).map(c => c.del);
+    body.update_rules = rules.filter(c => c.update).map(c => c.update);
+    body.add_rules = rules.filter(c => c.add).map(c => c.add);
     $("em-conn").dataset.msg = "";
-    $("em-conn").textContent = "已保存";
-  } catch (e) { $("em-conn").textContent = "保存失败：" + e.message; }
-  loadEmailSettings();
-};
+    return api("/api/email/settings", send("PUT", body));
+  },
+  reload: loadEmailSettings,
+});
+for (const [k, id] of Object.entries(CRED_INPUTS)) $(id).addEventListener("input", e => {
+  if (!emEdit) return;
+  emEdit.cred[k] = e.target.value;
+  lockMsg = "";
+  renderLock();
+  renderCredentials(); // 「连接」 waits until the credentials are saved
+});
 $("em-connect").onclick = () => { location.href = "/api/email/authorize"; };
 $("em-save-token").onclick = async () => {
   $("em-save-token").disabled = true;
@@ -67,7 +132,6 @@ $("em-save-token").onclick = async () => {
     $("em-conn").dataset.msg = "1";
     $("em-conn").textContent = "token 不能用：" + e.message;
   }
-  $("em-save-token").disabled = false;
   loadEmailSettings();
 };
 $("em-disconnect").onclick = async () => {
@@ -76,42 +140,31 @@ $("em-disconnect").onclick = async () => {
   $("em-conn").dataset.msg = "";
   loadEmailSettings();
 };
-$("em-add-rule").onclick = () => { draftRule = { ...NEW_RULE }; renderRules(); $("em-rules").querySelector('[data-rule="new"][data-k="account"]')?.focus(); };
+$("em-add-rule").onclick = () => {
+  if (!emEdit) return;
+  emEdit.added.push({ ...NEW_RULE });
+  renderRules();
+  renderLock();
+  $("em-rules").querySelector(`[data-rule="new${emEdit.added.length - 1}"][data-k="account"]`)?.focus();
+};
 $("em-rules").addEventListener("input", e => {
   const { rule, k } = e.target.dataset;
-  if (rule === "new" && draftRule) draftRule[k] = e.target.value;
+  if (!rule || !emEdit) return;
+  if (rule.startsWith("new")) emEdit.added[+rule.slice(3)][k] = e.target.value;
+  else (emEdit.rules[rule] ??= {})[k] = e.target.value;
+  lockMsg = "";
+  renderLock();
 });
-$("em-rules").addEventListener("change", async e => {
-  const { rule, k } = e.target.dataset;
-  if (!rule || rule === "new") return;
-  const r = emailRules.find(x => x.id === +rule);
-  try {
-    await api(`/api/email/rules/${rule}`, send("PATCH", { [k]: e.target.value }));
-    r[k] = e.target.value.trim();
-    e.target.classList.remove("invalid");
-    flash("em-status", `已保存${RULE_LABELS[k]}`);
-  } catch (err) {
-    e.target.classList.add("invalid");
-    flash("em-status", "没有保存：" + err.message);
-  }
-});
-$("em-rules").addEventListener("click", async e => {
-  if (e.target.matches("[data-rule-cancel]")) { draftRule = null; renderRules(); return; }
-  if (e.target.matches("[data-rule-save]")) {
-    try {
-      await api("/api/email/rules", send("POST", draftRule));
-      draftRule = null;
-      flash("em-status", "已添加规则");
-      loadEmailSettings();
-    } catch (err) { flash("em-status", "没有保存：" + err.message); }
-    return;
-  }
-  const del = e.target.dataset.ruleDel;
-  if (del && confirm("删除这条规则？已经读到的邮件和交易不受影响，以后不再读这种邮件。")) {
-    try { await api(`/api/email/rules/${del}`, { method: "DELETE" }); flash("em-status", "已删除规则"); }
-    catch (err) { flash("em-status", "删除失败：" + err.message); }
-    loadEmailSettings();
-  }
+$("em-rules").addEventListener("click", e => {
+  if (!emEdit) return;
+  const { ruleDel, ruleUndel, ruleUnadd } = e.target.dataset;
+  if (ruleDel) emEdit.deleted.add(+ruleDel);
+  else if (ruleUndel) emEdit.deleted.delete(+ruleUndel);
+  else if (ruleUnadd !== undefined) emEdit.added.splice(+ruleUnadd, 1);
+  else return;
+  lockMsg = "";
+  renderRules();
+  renderLock();
 });
 $("em-test").onclick = async () => {
   const key = $("em-test-rule").value;

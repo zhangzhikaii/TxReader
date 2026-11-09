@@ -76,7 +76,6 @@ tr.income { background:var(--income); }
 tr.suspect { background:var(--suspect); }
 tr.newday td { border-top:2px solid #6b7280; }
 tr.warn td.flag { color:#b91c1c; }
-tr.exported { color:var(--muted); }
 tr.clickable { cursor:pointer; }
 tr.clickable:hover { background:#f9fafb; }
 tr.clickable.viewing { background:#ecfdf5; }
@@ -111,6 +110,20 @@ body.reordering, body.reordering * { cursor:grabbing !important; user-select:non
 .chip button:hover { color:#b91c1c; }
 .chip button:disabled { display:none; }
 td select.add-cur { padding:2px 4px; font-size:13px; }
+/* Settings are locked until 「修改」; edits waiting for 「保存」 are marked */
+.lockbar { position:sticky; top:0; z-index:5; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+           padding:8px 12px; margin-bottom:12px; border:1px solid var(--line); border-radius:8px; background:#f9fafb; font-size:14px; }
+.lockbar.editing { background:#fffbeb; border-color:#fcd34d; }
+.lockbar .lock-state { font-weight:600; }
+.lockbar .lock-msg.warn { color:#b91c1c; }
+.lockbar button:first-of-type { margin-left:auto; }
+tr.deleted td { color:var(--muted); text-decoration:line-through; }
+.rule.deleted { opacity:.55; }
+tr.deleted td button { text-decoration:none; }
+tr.added td { background:#f0fdf4; }
+.chip.removed { text-decoration:line-through; color:var(--muted); background:#f3f4f6; }
+.chip.added { background:#dcfce7; }
+table.grid td.missing { background:#fffbeb; }
 .add-row { display:flex; gap:8px; margin-top:12px; }
 .add-row input { max-width:240px; }
 .settings-help { font-size:13px; color:var(--muted); margin:-4px 0 12px; }

@@ -1,10 +1,8 @@
 // 「交易」: kept transactions, filters, editing category and description.
 
-for (const p of ["tx", "ex"]) {
-  $(p + "-source").innerHTML = `<option value="">全部</option><option value="manual">手动输入</option><option value="email">邮件导入</option>` +
-    `<optgroup label="截图识别">` +
-    Object.entries(SOURCE_LABELS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("") + `</optgroup>`;
-}
+$("tx-source").innerHTML = `<option value="">全部</option><option value="manual">手动输入</option><option value="email">邮件导入</option>` +
+  `<optgroup label="截图识别">` +
+  Object.entries(SOURCE_LABELS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("") + `</optgroup>`;
 function filterQuery(p) {
   const q = new URLSearchParams();
   const fields = { source: "source", date_from: "from", date_to: "to", account: "account", currency: "currency", category: "category" };
@@ -34,8 +32,9 @@ function fillTxFilters() {
 
 let txRows = [];
 async function loadTransactions() {
+  const query = filterQuery("tx");
   try {
-    txRows = (await api("/api/transactions?" + filterQuery("tx"))).transactions;
+    txRows = (await api("/api/transactions?" + query)).transactions;
   } catch (e) {
     return flash("tx-status", "读取失败：" + e.message);
   }
@@ -46,11 +45,31 @@ async function loadTransactions() {
     <td>${esc(t.date)}</td><td>${esc(t.weekday)}</td><td>${esc(t.account)}</td><td>${esc(t.currency)}</td>
     <td class="num">${fmtAmount(t.amount)}</td>
     <td><input data-tx="${t.id}" data-k="category" value="${esc(t.category)}" list="m-categories"></td>
-    <td><input data-tx="${t.id}" data-k="description" value="${esc(t.description)}"></td>
-    <td>${t.export_count ? `<span class="tag done" title="最近一次：${esc(fmtTime(t.last_export))}">已导出${t.export_count > 1 ? " ×" + t.export_count : ""}</span>` : ""}</td></tr>`;
+    <td><input data-tx="${t.id}" data-k="description" value="${esc(t.description)}"></td></tr>`;
   }).join("");
   flash("tx-status", txRows.length ? `共 ${txRows.length} 条` : "没有符合条件的交易");
+  $("tx-export").disabled = !txRows.length;
+  txQuery = query;
 }
+// Export what is listed: the same filters, asked of the server again
+let txQuery = "";
+$("tx-export").onclick = async () => {
+  const now = new Date();
+  const filename = `txreader_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}.csv`;
+  $("tx-export").disabled = true;
+  try {
+    const res = await api("/api/transactions/export?" + txQuery);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(await res.blob());
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    flash("tx-status", `已导出 ${txRows.length} 条`);
+  } catch (e) {
+    flash("tx-status", "导出失败：" + e.message);
+  }
+  $("tx-export").disabled = !txRows.length;
+};
 for (const id of ["tx-source", "tx-from", "tx-to", "tx-account", "tx-currency", "tx-category"]) $(id).addEventListener("change", loadTransactions);
 $("tx-rows").addEventListener("change", async e => {
   const { tx: id, k } = e.target.dataset;

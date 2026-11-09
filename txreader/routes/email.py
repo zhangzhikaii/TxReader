@@ -106,6 +106,28 @@ def delete_email_rule(rule_id: int):
     return {"ok": True}
 
 
+class RuleChange(BaseModel):
+    id: int
+    fields: EmailRule
+
+
+class EmailEdits(BaseModel):
+    credentials: EmailCredentials | None = None  # None: unchanged
+    add_rules: list[EmailRule] = []
+    update_rules: list[RuleChange] = []
+    delete_rules: list[int] = []
+
+
+@router.put("/api/email/settings")
+def save_email_settings(body: EmailEdits):
+    """Credentials and rule edits saved together: all or nothing."""
+    mail.save_settings(body.credentials.model_dump() if body.credentials else None,
+                       [r.model_dump(exclude_none=True) for r in body.add_rules],
+                       {c.id: c.fields.model_dump(exclude_none=True) for c in body.update_rules},
+                       body.delete_rules)
+    return {"ok": True}
+
+
 class EmailTest(EmailRule):
     text: str
 

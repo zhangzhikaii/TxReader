@@ -10,7 +10,7 @@ import re
 from datetime import date
 
 from . import errors
-from .db import connect
+from .db import connect, transaction
 
 MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
@@ -84,6 +84,16 @@ def set_opening(account_id: int, currency: str, amount: float | None) -> None:
                          (account_id, cid, round(float(amount), 2)))
 
 
+def save_opening(balances: list[dict], start: str | None = None, set_start: bool = False) -> None:
+    """The settings page's edits, saved together (all or nothing): the start month (when
+    set_start) and balances [{"account_id", "currency", "amount" (None clears it)}]."""
+    with transaction():
+        if set_start:
+            set_start_month(start)
+        for b in balances:
+            set_opening(b["account_id"], b["currency"], b.get("amount"))
+
+
 # ---------- monthly rates ----------
 
 def _shift(month: str, n: int) -> str:
@@ -142,6 +152,13 @@ def set_rate(month: str, currency: str, rate: float | None) -> None:
             raise ValueError("汇率要大于 0")
         conn.execute("INSERT INTO fx_rates (month, currency_id, rate) VALUES (?, ?, ?)"
                      " ON CONFLICT (month, currency_id) DO UPDATE SET rate = excluded.rate", (month, cid, rate))
+
+
+def save_rates(rates: list[dict]) -> None:
+    """Several rates [{"month", "currency", "rate" (None clears it)}], all or nothing."""
+    with transaction():
+        for r in rates:
+            set_rate(r["month"], r["currency"], r.get("rate"))
 
 
 # ---------- balance sheet ----------
@@ -212,7 +229,8 @@ def balances(month: str | None = None, today: date | None = None) -> dict:
     """The balance sheet for the end of one month (docs/plan.md, 账户结余):
 
     {"month", "start_month", "months" (to choose from), "base",
-     "currencies": [columns, list order], "accounts": [{"name", "balances": {currency: amount}}],
+     "currencies": [columns, list order],
+     "accounts": [{"name", "balances": {currency: amount}, "count": transactions this month}],
      "rates": {currency: rate or None}, "totals": {currency: amount},
      "converted": {currency: in base or None}, "total": sum in base or None,
      "fx_gain": {currency: gain or None}, "fx_gain_total", "prev_total", "change"}
@@ -235,14 +253,19 @@ def balances(month: str | None = None, today: date | None = None) -> dict:
 
         # Rows: accounts in list order, each with its currencies; columns: currencies in use
         order = [r[0] for r in conn.execute("SELECT name FROM currencies ORDER BY sort, id")]
-        accounts = {r[0]: {"name": r[0], "balances": {}} for r in conn.execute(
+        accounts = {r[0]: {"name": r[0], "balances": {}, "count": 0} for r in conn.execute(
             "SELECT name FROM accounts ORDER BY sort, id")}
         for r in conn.execute(
                 "SELECT a.name, c.name FROM account_currencies ac"
                 " JOIN accounts a ON a.id = ac.account_id JOIN currencies c ON c.id = ac.currency_id"):
             accounts[r[0]]["balances"][r[1]] = 0.0
         for (a, c), v in holdings.items():
-            accounts.setdefault(a, {"name": a, "balances": {}})["balances"][c] = v
+            accounts.setdefault(a, {"name": a, "balances": {}, "count": 0})["balances"][c] = v
+        # For the page's "only accounts with something this month" (any currency)
+        for r in conn.execute("SELECT account, COUNT(*) FROM transactions WHERE substr(date, 1, 7) = ?"
+                              " GROUP BY account", (month.replace("-", "/"),)):
+            if r[0] in accounts:
+                accounts[r[0]]["count"] = r[1]
         used = {c for acc in accounts.values() for c in acc["balances"]}
         currencies = [c for c in order if c in used] + sorted(used - set(order))
 
