@@ -5,3 +5,4 @@ samples/
 data/
 .env
 seed/
+*.csv

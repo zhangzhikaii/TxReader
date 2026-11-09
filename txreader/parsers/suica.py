@@ -1,10 +1,10 @@
 """Parse an Apple Wallet Suica transaction detail screenshot.
 
 The top of the page looks like:
-              ¥327
-    品川駅 → 羽田空港第３ターミナル     <- route, or shop name
+              ¥123
+    某某駅 → 某某駅                    <- route, or shop name
             交通機関                   <- category
-     2026/10/25 21:29 (JST)
+     2026/01/02 12:34 (JST)
 Below are a 合計 box (same amount again) and a map, which are ignored.
 """
 import re

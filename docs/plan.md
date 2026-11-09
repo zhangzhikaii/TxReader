@@ -141,7 +141,7 @@
 
 ## 第 6 步（邮件导入）的做法
 
-- 原来的 KAI-server-python 用 Microsoft Graph 读 Outlook，按 `config.py` 里每家卡的发件人 / 标题 / 正则取出交易写 CSV。只搬了读邮件和解析，CSV、pandas 和别的接口都不要（2026-11-08）
+- 原来的另一个邮件项目用 Microsoft Graph 读 Outlook，按 `config.py` 里每家卡的发件人 / 标题 / 正则取出交易写 CSV。只搬了读邮件和解析，CSV、pandas 和别的接口都不要（2026-11-08）
 - 认出来的交易和截图一样先进待核对（`ocr_rows`，来源 `email`），核对后入库（`origin = email`）（2026-11-08）
 - Client ID / secret、授权令牌、邮件规则都存在数据库里，在「设置 › 邮件」录入，不放 `.env` / `config.py`。授权在网页里完成：「连接 Outlook」→ 微软登录 → 回到 `/api/email/callback`（2026-11-08）
 - 也可以不在网页里登录，直接填 refresh token（保存时马上刷新一次验证）；回调地址可以自己填（比如原来注册的 `http://localhost:8000`，首页收到授权码会转给回调）（2026-11-08）

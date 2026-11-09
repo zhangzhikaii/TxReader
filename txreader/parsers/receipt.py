@@ -173,7 +173,7 @@ def _find_merchant(header: list[Box]) -> str:
     if stores:
         store = stores[0]
         name = store.text.strip()
-        if len(name) <= 8:  # only a branch name, e.g. 大塚店: put the brand in front
+        if len(name) <= 8:  # only a branch name, e.g. 某某店: put the brand in front
             above = [b for b in lines if b.y1 <= store.cy]
             if above:
                 name = max(above, key=lambda b: b.y1 - b.y0).text.strip() + name
