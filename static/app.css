@@ -138,6 +138,11 @@ table.grid td input.missing { background:#fffbeb; border-color:#fcd34d; }
 .month-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .month-bar select { min-width:140px; }
 .month-bar button { padding:6px 12px; }
+#tx-period { min-width:0; }
+.period-label { min-width:9em; text-align:center; font-weight:600; }
+#tx-adv-toggle { margin-left:auto; }
+#tx-adv[hidden] { display:none; } /* .settings sets display:grid */
+#tx-adv-toggle.active { background:#d1fae5; }
 table.sheet td, table.sheet th { padding:6px 10px; }
 table.sheet td.num, table.sheet th.num { min-width:110px; }
 table.sheet td.none { color:var(--line); text-align:right; }

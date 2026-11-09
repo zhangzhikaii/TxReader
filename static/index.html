@@ -149,7 +149,21 @@
 
   <!-- ===== 交易 ===== -->
   <section id="view-transactions" hidden>
-    <div class="card settings">
+    <div class="card month-bar">
+      <select id="tx-period" aria-label="周期">
+        <option value="day">日</option>
+        <option value="week">周</option>
+        <option value="month">月</option>
+        <option value="year">年</option>
+        <option value="custom" hidden>自定义</option>
+      </select>
+      <button class="secondary" id="tx-prev" title="上一个周期">‹</button>
+      <span id="tx-range" class="period-label"></span>
+      <button class="secondary" id="tx-next" title="下一个周期">›</button>
+      <button class="secondary" id="tx-today" title="回到包含今天的周期">今天</button>
+      <button class="secondary" id="tx-adv-toggle" aria-expanded="false">高级筛选</button>
+    </div>
+    <div class="card settings" id="tx-adv" hidden>
       <label>从<input id="tx-from" type="date"></label>
       <label>到<input id="tx-to" type="date"></label>
       <label>账户<select id="tx-account"></select></label>
@@ -165,7 +179,7 @@
         </table>
       </div>
       <div class="bar"><button id="tx-export" class="secondary" title="把上面列出的交易导出成 CSV">导出 CSV</button><span id="tx-status" class="status"></span></div>
-      <div class="legend">截图识别、邮件导入的交易点一行可以查看原截图 / 原邮件。入库后只能修改种类和描述，改完自动保存</div>
+      <div class="legend"><span class="sw" style="background:var(--income)"></span> 收入　粗线分隔不同日期<br>截图识别、邮件导入的交易点一行可以查看原截图 / 原邮件。入库后只能修改种类和描述，改完自动保存</div>
     </div>
   </section>
 

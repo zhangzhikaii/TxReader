@@ -12,12 +12,88 @@ function filterQuery(p) {
   }
   return q.toString();
 }
-// The transactions page opens on the current month; after that the dates are what was chosen
-{
-  const now = new Date();
-  $("tx-from").value = ymd(new Date(now.getFullYear(), now.getMonth(), 1));
-  $("tx-to").value = ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+// Period bar: a day / week / month / year containing a date, stepped with ‹ ›.
+// It only sets the from / to dates of 高级筛选; other dates there show as 自定义.
+const PERIODS = ["day", "week", "month", "year"];
+let txPeriod = PERIODS.includes(load("tx.period")) ? load("tx.period") : "month";
+const parseYmd = s => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+function periodRange(kind, d) {
+  const y = d.getFullYear(), m = d.getMonth(), day = d.getDate();
+  if (kind === "day") return [d, d];
+  if (kind === "week") { // Monday to Sunday
+    const s = new Date(y, m, day - (d.getDay() + 6) % 7);
+    return [s, new Date(s.getFullYear(), s.getMonth(), s.getDate() + 6)];
+  }
+  if (kind === "month") return [new Date(y, m, 1), new Date(y, m + 1, 0)];
+  return [new Date(y, 0, 1), new Date(y, 11, 31)];
 }
+function shiftPeriod(kind, d, n) {
+  const y = d.getFullYear(), m = d.getMonth(), day = d.getDate();
+  if (kind === "day") return new Date(y, m, day + n);
+  if (kind === "week") return new Date(y, m, day + 7 * n);
+  if (kind === "month") return new Date(y, m + n, 1);
+  return new Date(y + n, 0, 1);
+}
+function setPeriod(kind, anchor) {
+  const [a, b] = periodRange(kind, anchor);
+  txPeriod = kind;
+  save("tx.period", kind);
+  $("tx-from").value = ymd(a);
+  $("tx-to").value = ymd(b);
+}
+// Which period the chosen dates are (the last used kind first), or custom
+function currentPeriod() {
+  const from = $("tx-from").value, to = $("tx-to").value;
+  if (!from || !to) return null;
+  for (const kind of [txPeriod, ...PERIODS.filter(k => k !== txPeriod)]) {
+    const [a, b] = periodRange(kind, parseYmd(from));
+    if (ymd(a) === from && ymd(b) === to) return kind;
+  }
+  return null;
+}
+const WEEKDAYS = "日一二三四五六";
+const fmtDay = (d, withYear = true) => `${withYear ? d.getFullYear() + "年" : ""}${d.getMonth() + 1}月${d.getDate()}日`;
+function showPeriod() {
+  const kind = currentPeriod(), from = $("tx-from").value, to = $("tx-to").value;
+  if (kind && kind !== txPeriod) { txPeriod = kind; save("tx.period", kind); }
+  $("tx-period").value = kind ?? "custom";
+  $("tx-prev").disabled = $("tx-next").disabled = !kind;
+  let label;
+  if (kind) {
+    const a = parseYmd(from), b = parseYmd(to);
+    label = kind === "day" ? `${fmtDay(a)}（周${WEEKDAYS[a.getDay()]}）`
+      : kind === "week" ? `${fmtDay(a)} – ${fmtDay(b, b.getFullYear() !== a.getFullYear())}`
+      : kind === "month" ? fmtMonth(from.slice(0, 7))
+      : `${a.getFullYear()}年`;
+  } else {
+    label = from && to ? `${from} – ${to}` : from ? `${from} 起` : to ? `至 ${to}` : "全部日期";
+  }
+  $("tx-range").textContent = label;
+  // 高级筛选 shows how many of its other filters are in use, so a closed panel is not forgotten
+  const used = ["tx-account", "tx-currency", "tx-category", "tx-source"].filter(id => $(id).value).length;
+  $("tx-adv-toggle").textContent = "高级筛选" + (used ? ` · ${used}` : "") + ($("tx-adv").hidden ? " ▾" : " ▴");
+  $("tx-adv-toggle").classList.toggle("active", used > 0);
+}
+function showAdvanced(open) {
+  $("tx-adv").hidden = !open;
+  $("tx-adv-toggle").setAttribute("aria-expanded", open);
+  save("tx.advOpen", open ? "1" : "0");
+  showPeriod();
+}
+$("tx-adv-toggle").onclick = () => showAdvanced($("tx-adv").hidden);
+$("tx-period").addEventListener("change", e => {
+  const from = $("tx-from").value;
+  setPeriod(e.target.value, from ? parseYmd(from) : new Date());
+  loadTransactions();
+});
+for (const [id, n] of [["tx-prev", -1], ["tx-next", 1]]) $(id).onclick = () => {
+  setPeriod(txPeriod, shiftPeriod(txPeriod, parseYmd($("tx-from").value), n));
+  loadTransactions();
+};
+$("tx-today").onclick = () => { setPeriod(currentPeriod() ?? txPeriod, new Date()); loadTransactions(); };
+// The page opens on the period containing today; after that the dates are what was chosen
+setPeriod(txPeriod, new Date());
+showAdvanced(load("tx.advOpen") === "1");
 // Account / currency / category filters offer the settings lists, keeping what is chosen
 function fillTxFilters() {
   const fill = (id, label, names) => {
@@ -32,6 +108,7 @@ function fillTxFilters() {
   if (txPreset) {
     const p = txPreset;
     txPreset = null;
+    txPeriod = "month";
     $("tx-from").value = p.from;
     $("tx-to").value = p.to;
     $("tx-account").value = $("tx-source").value = "";
@@ -39,21 +116,25 @@ function fillTxFilters() {
       if (v && ![...$(id).options].some(o => o.value === v)) $(id).insertAdjacentHTML("beforeend", `<option>${esc(v)}</option>`);
       $(id).value = v;
     }
+    showAdvanced(true); // show which category / currency is filtered
   }
 }
 let txPreset = null;
 
 let txRows = [];
 async function loadTransactions() {
+  showPeriod();
   const query = filterQuery("tx");
   try {
     txRows = (await api("/api/transactions?" + query)).transactions;
   } catch (e) {
     return flash("tx-status", "读取失败：" + e.message);
   }
-  $("tx-rows").innerHTML = txRows.map(t => {
+  $("tx-rows").innerHTML = txRows.map((t, i) => {
     const shot = t.image_id != null, mail = t.email_id != null; // manual rows have nothing to show
-    return `<tr class="${shot || mail ? "clickable" : ""}" ${shot ? `data-img-id="${t.image_id}" data-name="${esc(t.image_name)}" title="点击查看原截图"` : ""}` +
+    const newDay = i > 0 && t.date.slice(0, 10) !== txRows[i - 1].date.slice(0, 10);
+    const cls = [shot || mail ? "clickable" : "", t.amount > 0 ? "income" : "", newDay ? "newday" : ""].filter(Boolean).join(" ");
+    return `<tr class="${cls}" ${shot ? `data-img-id="${t.image_id}" data-name="${esc(t.image_name)}" title="点击查看原截图"` : ""}` +
       ` ${mail ? `data-mail-id="${t.email_id}" title="点击查看原邮件"` : ""}>
     <td>${esc(t.date)}</td><td>${esc(t.weekday)}</td><td>${esc(t.account)}</td><td>${esc(t.currency)}</td>
     <td class="num">${fmtAmount(t.amount)}</td>
