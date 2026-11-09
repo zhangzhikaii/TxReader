@@ -9,7 +9,7 @@ from dataclasses import asdict
 from datetime import datetime
 
 from . import errors, lists
-from .db import connect, now, register_accounts, save_image, sha256
+from .db import connect, now, register_accounts, save_image, sha256, transaction
 from .matching import match_rows
 from .models import Tx
 from .ocr import decode_image
@@ -321,6 +321,20 @@ def update_transaction(tx_id: int, changes: dict, add_category: bool = False) ->
             (*fields.values(), now(), tx_id)).rowcount
     if not n:
         raise NotFound(tx_id)
+
+
+def update_transactions(edits: list[dict], add_categories: bool = False) -> None:
+    """Several edits ({"id", "category"?, "description"?}) all or nothing. Categories not on
+    the list are added only with add_categories; otherwise all of them are named in one
+    lists.UnknownNames."""
+    with transaction():
+        with connect() as conn:
+            known = set(lists.offered(conn)["categories"])
+        new = list(dict.fromkeys(c for e in edits if (c := (e.get("category") or "").strip()) and c not in known))
+        if new and not add_categories:
+            raise lists.UnknownNames({"accounts": [], "currencies": [], "pairs": [], "categories": new})
+        for e in edits:
+            update_transaction(e["id"], {k: v for k, v in e.items() if k != "id"}, add_category=True)
 
 
 def suggestions() -> dict:

@@ -23,7 +23,15 @@ const send = (method, body) => ({ method, headers: { "Content-Type": "applicatio
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const WEEKDAYS_JA = "日月火水木金土"; // indexed by Date.getDay()
 const fmtAmount = n => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const parseAmount = s => parseFloat(String(s).replace(/[,\s¥]/g, "")) || 0;
+// Accepts "-35", "(35)" (negative, the way fmtLedger writes it), "1,234.5", "¥35"
+const parseAmount = s => {
+  const t = String(s).replace(/[,\s¥]/g, ""), paren = /^\(.*\)$/.test(t);
+  const v = parseFloat(paren ? t.slice(1, -1) : t) || 0;
+  return paren ? -Math.abs(v) : v;
+};
+// Ledger style for transaction amounts: expenses in parentheses (red), income green; see amtClass
+const fmtLedger = n => n < 0 ? `(${fmtAmount(-n)})` : fmtAmount(n);
+const amtClass = n => n < 0 ? "amt-out" : n > 0 ? "amt-in" : "";
 const fmtTime = iso => iso ? new Date(iso).toLocaleString("zh-CN", { hour12: false }) : "";
 const pad = n => String(n).padStart(2, "0");
 

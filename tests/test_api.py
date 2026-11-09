@@ -104,6 +104,20 @@ def test_transactions_and_export(client):
     assert client.patch(tx_url, json={"category": "日用品"}).is_success
     assert client.patch(tx_url, json={"amount": 5}).status_code == 400
 
+    # Several edits together (the transactions page's 保存): all or none
+    a, b = txs[0]["id"], txs[1]["id"]
+    batch = lambda edits, **kw: client.patch("/api/transactions", json={"edits": edits, **kw})
+    r = batch([{"id": a, "description": "改了"}, {"id": b, "category": "新种类甲"}, {"id": a, "category": "新种类乙"}])
+    assert r.status_code == 409 and r.json()["detail"]["unknown"]["categories"] == ["新种类甲", "新种类乙"]
+    assert batch([{"id": a, "description": "改了"}, {"id": 99999, "description": "x"}]).status_code == 404
+    assert batch([{"id": a, "description": "改了"}, {"id": b, "category": ""}]).status_code == 400
+    assert [t["description"] for t in client.get("/api/transactions").json()["transactions"]] == ['Shop, "A"', "超市"]
+    assert batch([{"id": a, "description": "改了"}, {"id": b, "category": "新种类甲"}], add_categories=True).is_success
+    got = {t["id"]: t for t in client.get("/api/transactions").json()["transactions"]}
+    assert (got[a]["description"], got[a]["category"], got[b]["category"]) == ("改了", "日用品", "新种类甲")
+    assert "新种类甲" in client.get("/api/suggestions").json()["categories"]
+    assert batch([{"id": a, "description": 'Shop, "A"'}, {"id": b, "category": "饮食费"}]).is_success
+
     r = client.get("/api/transactions/export")
     assert r.headers["content-type"].startswith("text/csv")
     assert r.content.decode("utf-8") == (

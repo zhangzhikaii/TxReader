@@ -138,7 +138,7 @@
         </table>
       </div>
       <div id="no-pending" class="empty" hidden>没有待核对的交易</div>
-      <div class="legend"><span class="sw" style="background:var(--income)"></span> 收入（请确认种类）　<span class="sw" style="background:var(--suspect)"></span> 疑似重复（日期金额相同、商户不同，默认不勾选）　⚠ 日期或正负号是推测的　日期格式 2026/10/29 22:12:00　🖼 / ✉ 查看原截图 / 原邮件<br>修改会自动保存；入库后只能改种类和描述，其他内容请在提交前核对好</div>
+      <div class="legend">金额：<span class="amt-out">(35.00)</span> 支出、<span class="amt-in">35.00</span> 收入（收入请确认种类）　<span class="sw" style="background:var(--suspect)"></span> 疑似重复（日期金额相同、商户不同，默认不勾选）　⚠ 日期或正负号是推测的　日期格式 2026/10/29 22:12:00　🖼 / ✉ 查看原截图 / 原邮件<br>修改会自动保存；入库后只能改种类和描述，其他内容请在提交前核对好</div>
       <div class="bar">
         <button id="confirm">提交入库</button>
         <button id="delete-checked" class="danger">删除所选</button>
@@ -172,6 +172,7 @@
       <label>添加方式<select id="tx-source"></select></label>
     </div>
     <div class="card">
+      <div id="tx-lock" class="lockbar"></div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>日期</th><th>曜日</th><th>账户</th><th>币种</th><th class="num">金额</th><th>种类</th><th>描述</th></tr></thead>
@@ -179,7 +180,7 @@
         </table>
       </div>
       <div class="bar"><button id="tx-export" class="secondary" title="把上面列出的交易导出成 CSV">导出 CSV</button><span id="tx-status" class="status"></span></div>
-      <div class="legend"><span class="sw" style="background:var(--income)"></span> 收入　粗线分隔不同日期<br>截图识别、邮件导入的交易点一行可以查看原截图 / 原邮件。入库后只能修改种类和描述，改完自动保存</div>
+      <div class="legend">金额：<span class="amt-out">(35.00)</span> 支出、<span class="amt-in">35.00</span> 收入　粗线分隔不同日期<br>截图识别、邮件导入的交易点一行可以查看原截图 / 原邮件。入库后只能修改种类和描述：点「修改」后改，改完点「保存」确认后一起保存</div>
     </div>
   </section>
 

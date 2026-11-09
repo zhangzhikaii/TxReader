@@ -52,7 +52,10 @@ function renderMonthly() {
   $("mo-title").textContent = `${fmtMonth(mo.month)} 收支`;
   $("mo-head").innerHTML = `<tr><th>种类</th>${cols.map(c => `<th class="num">${esc(c)}</th>`).join("")}<th class="num">合计（${esc(base)}）</th></tr>`;
   const rows = sortCategories($("mo-hide-empty").checked ? mo.categories.filter(r => r.count) : mo.categories);
-  $("mo-rows").innerHTML = rows.map(r => `<tr><td>${esc(r.name)}${r.count ? `<span class="count">${r.count} 笔</span>` : ""}</td>` +
+  // The category name (when it has transactions) opens them on the transactions page;
+  // number cells don't, so they can be selected and copied
+  $("mo-rows").innerHTML = rows.map(r => `<tr><td>` +
+    (r.count ? `<span class="jump" data-cat="${esc(r.name)}" title="在交易页查看">${esc(r.name)}</span><span class="count">${r.count} 笔</span>` : esc(r.name)) + `</td>` +
     cols.map(c => c in r.amounts ? moneyCell(r.amounts[c]) : `<td class="num blank">·</td>`).join("") +
     (Object.keys(r.amounts).length ? moneyCell(r.converted) : `<td class="num blank">·</td>`) + `</tr>`).join("") ||
     `<tr><td colspan="${cols.length + 2}" class="empty">这个月没有交易</td></tr>`;
@@ -62,6 +65,13 @@ function renderMonthly() {
     `<tr><td>汇差盈亏</td>${cols.map(fx).join("")}${mo.fx_gain ? moneyCell(mo.fx_gain_total) : `<td class="none">—</td>`}</tr>` +
     `<tr class="strong"><td>${esc(base)}合计</td>${cols.map(c => moneyCell(mo.base_total[c])).join("")}${total == null ? `<td class="missing">缺汇率</td>` : moneyCell(total)}</tr>`;
 }
+$("mo-rows").addEventListener("click", e => {
+  const el = e.target.closest("[data-cat]");
+  if (!el) return;
+  const [y, m] = mo.month.split("-").map(Number);
+  txPreset = { from: ymd(new Date(y, m - 1, 1)), to: ymd(new Date(y, m, 0)), category: el.dataset.cat, currency: "" };
+  location.hash = "#transactions";
+});
 $("mo-month").addEventListener("change", e => loadMonthly(e.target.value));
 $("mo-prev").onclick = () => loadMonthly(mo.months[mo.months.indexOf(mo.month) + 1]);
 $("mo-next").onclick = () => loadMonthly(mo.months[mo.months.indexOf(mo.month) - 1]);

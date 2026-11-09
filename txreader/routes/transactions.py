@@ -57,6 +57,24 @@ def edit_transaction(tx_id: int, body: TransactionEdit):
     return {"ok": True}
 
 
+class TransactionBatchEdit(BaseModel):
+    id: int
+    category: str | None = None
+    description: str | None = None
+
+
+class TransactionBatch(BaseModel):
+    edits: list[TransactionBatchEdit]
+    add_categories: bool = False  # the user agreed to add categories not on the list yet
+
+
+@router.patch("/api/transactions")
+def edit_transactions(body: TransactionBatch):
+    """Edits saved together from the transactions page: all of them, or none."""
+    store.update_transactions([e.model_dump(exclude_none=True) for e in body.edits], body.add_categories)
+    return {"ok": True}
+
+
 @router.get("/api/suggestions")
 def suggestions():
     return store.suggestions()

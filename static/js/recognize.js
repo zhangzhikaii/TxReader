@@ -144,7 +144,7 @@ async function loadCounts() {
 const byId = id => records.find(r => r.id === +id);
 
 function suspectTip(s) {
-  return `疑似重复：与${s.confirmed ? "已入库" : "待核对"}的「${s.date} ${fmtAmount(s.amount)} ${s.merchant}」` +
+  return `疑似重复：与${s.confirmed ? "已入库" : "待核对"}的「${s.date} ${fmtLedger(s.amount)} ${s.merchant}」` +
     "日期和金额相同、商户不同。确认是重复就删除这一行";
 }
 
@@ -158,13 +158,13 @@ function renderPending() {
     const tip = [r.year_guessed && "日期为推测", r.sign_guessed && "正负号为推测"].filter(Boolean).join("，");
     const newDay = i > 0 && r.date.slice(0, 10) !== records[i - 1].date.slice(0, 10);
     const imgKey = "srv-" + r.image_id;
-    return `<tr class="${r.amount > 0 ? "income" : ""} ${r.suspect ? "suspect" : ""} ${warn ? "warn" : ""} ${newDay ? "newday" : ""}">
+    return `<tr class="${r.suspect ? "suspect" : ""} ${warn ? "warn" : ""} ${newDay ? "newday" : ""}">
       <td><input type="checkbox" data-check="${r.id}" ${r.checked ? "checked" : ""}></td>
       <td class="date"><input data-id="${r.id}" data-k="date" value="${esc(r.date)}" class="${r.year_guessed ? "guess" : ""}" title="${r.year_guessed ? "日期为推测，请核对" : ""}"></td>
       <td>${esc(r.weekday)}</td>
       <td><input data-id="${r.id}" data-k="account" value="${esc(r.account)}" list="m-accounts"></td>
       <td><input data-id="${r.id}" data-k="currency" value="${esc(r.currency)}"></td>
-      <td class="amt"><input data-id="${r.id}" data-k="amount" value="${fmtAmount(r.amount)}"></td>
+      <td class="amt"><input data-id="${r.id}" data-k="amount" value="${fmtLedger(r.amount)}" class="${amtClass(r.amount)}" title="支出写成 (35.00) 或 -35"></td>
       <td><input data-id="${r.id}" data-k="category" value="${esc(r.category)}" list="m-categories"></td>
       <td><input data-id="${r.id}" data-k="merchant" value="${esc(r.merchant)}"></td>
       <td class="flag" title="${esc(r.suspect ? suspectTip(r.suspect) : tip)}">${warn ? "⚠" : ""}${r.suspect ? ' <span class="tag">疑似重复</span>' : ""}</td>
@@ -181,7 +181,7 @@ function renderPending() {
   $("skipped").hidden = skipped.length === 0;
   $("skipped").querySelector("summary").textContent = `已入库，跳过 ${skipped.length} 条`;
   $("skipped-rows").innerHTML = skipped.map(s =>
-    `<tr><td>${esc(s.date)}</td><td class="num">${fmtAmount(s.amount)}</td><td>${esc(s.merchant)}</td></tr>`).join("");
+    `<tr><td>${esc(s.date)}</td><td class="num ${amtClass(s.amount)}">${fmtLedger(s.amount)}</td><td>${esc(s.merchant)}</td></tr>`).join("");
   if (active.id && active.k) $("rows").querySelector(`input[data-id="${active.id}"][data-k="${active.k}"]`)?.focus();
 }
 
@@ -207,8 +207,8 @@ $("rows").addEventListener("change", e => {
   if (!r || !k) return;
   if (k === "amount") {
     // Update in place (a full re-render isn't needed)
-    e.target.value = fmtAmount(r.amount);
-    e.target.closest("tr").classList.toggle("income", r.amount > 0);
+    e.target.value = fmtLedger(r.amount);
+    e.target.className = amtClass(r.amount);
     saveDraft(r, { amount: r.amount });
   } else if (k === "date") {
     const parsed = parseDate(e.target.value);

@@ -8,6 +8,10 @@ function route() {
     history.replaceState(null, "", "#settings");
     return;
   }
+  if (!$("view-transactions").hidden && view !== "transactions" && !leaveTxEdit()) { // same for transactions
+    history.replaceState(null, "", "#transactions");
+    return;
+  }
   if (view === "recognize") { view = "add"; showMethod("screenshot"); } // old bookmark
   if (view === "rates" || view === "settings-email") { // rates moved into settings; old links still work
     showSetTab(view === "rates" ? "rates" : "email");

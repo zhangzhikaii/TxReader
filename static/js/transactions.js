@@ -130,17 +130,7 @@ async function loadTransactions() {
   } catch (e) {
     return flash("tx-status", "读取失败：" + e.message);
   }
-  $("tx-rows").innerHTML = txRows.map((t, i) => {
-    const shot = t.image_id != null, mail = t.email_id != null; // manual rows have nothing to show
-    const newDay = i > 0 && t.date.slice(0, 10) !== txRows[i - 1].date.slice(0, 10);
-    const cls = [shot || mail ? "clickable" : "", t.amount > 0 ? "income" : "", newDay ? "newday" : ""].filter(Boolean).join(" ");
-    return `<tr class="${cls}" ${shot ? `data-img-id="${t.image_id}" data-name="${esc(t.image_name)}" title="点击查看原截图"` : ""}` +
-      ` ${mail ? `data-mail-id="${t.email_id}" title="点击查看原邮件"` : ""}>
-    <td>${esc(t.date)}</td><td>${esc(t.weekday)}</td><td>${esc(t.account)}</td><td>${esc(t.currency)}</td>
-    <td class="num">${fmtAmount(t.amount)}</td>
-    <td><input data-tx="${t.id}" data-k="category" value="${esc(t.category)}" list="m-categories"></td>
-    <td><input data-tx="${t.id}" data-k="description" value="${esc(t.description)}"></td></tr>`;
-  }).join("");
+  renderTxRows();
   flash("tx-status", txRows.length ? `共 ${txRows.length} 条` : "没有符合条件的交易");
   $("tx-export").disabled = !txRows.length;
   txQuery = query;
@@ -165,45 +155,114 @@ $("tx-export").onclick = async () => {
   $("tx-export").disabled = !txRows.length;
 };
 for (const id of ["tx-source", "tx-from", "tx-to", "tx-account", "tx-currency", "tx-category"]) $(id).addEventListener("change", loadTransactions);
-$("tx-rows").addEventListener("change", async e => {
-  const { tx: id, k } = e.target.dataset;
-  if (!id) return;
-  const value = e.target.value;
-  const t = txRows.find(t => t.id === +id);
-  if (k === "category" && !value.trim()) {
-    e.target.value = t?.category ?? "";
-    return flash("tx-status", "种类不能为空");
-  }
-  const save = body => api(`/api/transactions/${id}`, send("PATCH", body));
-  try {
-    if (k === "category") {
-      // Changing a stored transaction's category is confirmed; a new category is added to the list
-      const name = value.trim(), old = t?.category ?? "";
-      if (name === old) return;
-      const isNew = !knownCategories.has(name);
-      const what = t ? `${t.date.slice(0, 10)}　${fmtAmount(t.amount)} ${t.currency}${t.description ? "　" + t.description : ""}` : "";
-      if (!confirm(`把这笔交易的种类从「${old}」改为「${name}」？\n${what}` +
-                   (isNew ? `\n\n「${name}」还不在种类清单里，会一起新增。` : ""))) {
-        e.target.value = old;
-        return flash("tx-status", "没有修改");
-      }
-      await save({ category: name, add_category: isNew });
-      if (t) t.category = name;
-      e.target.value = name;
-      if (isNew) { await loadSuggestions(); fillTxFilters(); }
-      return flash("tx-status", isNew ? `已新增种类「${name}」，这笔交易已改为「${name}」` : `种类已改为「${name}」`);
+// 防误触: the table is read-only until 「修改」. Edits wait in txEdit (id -> the row as it was,
+// plus the changed fields) until 「保存」 lists them for a confirm and saves them together.
+// They are kept across filter changes and reloads; leaving the page with some asks first.
+let txEdit = null, txLockMsg = "";
+function renderTxRows() {
+  $("tx-rows").innerHTML = txRows.map((t, i) => {
+    const shot = t.image_id != null, mail = t.email_id != null; // manual rows have nothing to show
+    const newDay = i > 0 && t.date.slice(0, 10) !== txRows[i - 1].date.slice(0, 10);
+    const cls = [shot || mail ? "clickable" : "", newDay ? "newday" : ""].filter(Boolean).join(" ");
+    const ed = txEdit?.get(t.id);
+    const cell = (k, extra = "") => {
+      if (!txEdit) return `<td>${esc(t[k])}</td>`;
+      const changed = ed && k in ed;
+      return `<td><input data-tx="${t.id}" data-k="${k}" value="${esc(changed ? ed[k] : t[k])}" ${extra}${changed ? ` class="changed"` : ""}></td>`;
+    };
+    return `<tr class="${cls}" ${shot ? `data-img-id="${t.image_id}" data-name="${esc(t.image_name)}" title="点击查看原截图"` : ""}` +
+      ` ${mail ? `data-mail-id="${t.email_id}" title="点击查看原邮件"` : ""}>
+    <td>${esc(t.date)}</td><td>${esc(t.weekday)}</td><td>${esc(t.account)}</td><td>${esc(t.currency)}</td>
+    <td class="num ${amtClass(t.amount)}">${fmtLedger(t.amount)}</td>${cell("category", `list="m-categories"`)}${cell("description")}</tr>`;
+  }).join("");
+}
+const txWhat = t => `${t.date.slice(0, 10)}　${fmtLedger(t.amount)} ${t.currency}${t.description ? "　" + t.description : ""}`;
+// The pending edits as lines for the confirm; throws on one that can't be saved
+function txChanges() {
+  const out = [];
+  for (const ed of txEdit?.values() ?? []) {
+    if ("category" in ed) {
+      if (!ed.category.trim()) throw new Error(`${txWhat(ed.t)}：种类不能为空`);
+      out.push(`${txWhat(ed.t)}：种类「${ed.t.category}」→「${ed.category.trim()}」`);
     }
-    await save({ [k]: value });
-    if (t) t[k] = value;
-    flash("tx-status", "描述已保存");
-  } catch (err) {
-    if (k === "category") e.target.value = t?.category ?? "";
-    flash("tx-status", "保存失败：" + err.message);
+    if ("description" in ed) out.push(`${txWhat(ed.t)}：描述「${ed.t.description}」→「${ed.description}」`);
   }
+  return out;
+}
+const txPending = () => { try { return txChanges().length; } catch { return 1; } };
+function renderTxLock() {
+  const bar = $("tx-lock");
+  const msg = txLockMsg ? `<span class="lock-msg">${esc(txLockMsg)}</span>` : "";
+  if (!txEdit) {
+    bar.className = "lockbar";
+    bar.innerHTML = `<span class="lock-state">🔒 只读</span>${msg || `<span class="muted">要改种类或描述先点「修改」，改完统一保存</span>`}` +
+      `<button data-lock="edit">✎ 修改</button>`;
+    return;
+  }
+  let n = 0, problem = "";
+  try { n = txChanges().length; } catch (e) { problem = e.message; }
+  bar.className = "lockbar editing";
+  bar.innerHTML = `<span class="lock-state">✎ 正在修改</span>` +
+    (problem ? `<span class="lock-msg warn">${esc(problem)}</span>` : msg || `<span class="muted">${n ? `${n} 处改动，还没保存` : "还没有改动"}</span>`) +
+    `<button class="secondary" data-lock="cancel">${n || problem ? "放弃" : "完成"}</button>` +
+    `<button data-lock="save" ${n && !problem ? "" : "disabled"}>保存${n ? `（${n} 处）` : ""}</button>`;
+}
+// Ends editing; with unsaved edits, asks first. False: the user wants to keep editing.
+function leaveTxEdit() {
+  if (!txEdit) return true;
+  const n = txPending();
+  if (n && !confirm(`交易有 ${n} 处改动还没保存。\n点「确定」放弃这些改动，点「取消」回去接着改。`)) return false;
+  txEdit = null;
+  txLockMsg = n ? "改动已放弃" : "";
+  renderTxLock();
+  renderTxRows();
+  return true;
+}
+async function saveTxEdits() {
+  let list;
+  try { list = txChanges(); } catch (e) { txLockMsg = e.message; return renderTxLock(); }
+  if (!list.length) return;
+  const cats = [...txEdit.values()].filter(ed => "category" in ed).map(ed => ed.category.trim());
+  const newCats = [...new Set(cats.filter(c => !knownCategories.has(c)))];
+  if (!confirm(`保存这 ${list.length} 处改动？\n\n${list.map(t => "· " + t).join("\n")}` +
+               (newCats.length ? `\n\n${newCats.map(c => `「${c}」`).join("")}还不在种类清单里，会一起新增。` : ""))) return;
+  const edits = [...txEdit].map(([id, ed]) => ({
+    id, ...("category" in ed && { category: ed.category.trim() }), ...("description" in ed && { description: ed.description }) }));
+  $("tx-lock").querySelector('[data-lock="save"]').disabled = true;
+  try {
+    await api("/api/transactions", send("PATCH", { edits, add_categories: newCats.length > 0 }));
+  } catch (e) {
+    txLockMsg = "没有保存（一处也没改）：" + e.message;
+    return renderTxLock();
+  }
+  txEdit = null;
+  txLockMsg = `已保存 ${list.length} 处改动` + (newCats.length ? `，新增种类${newCats.map(c => `「${c}」`).join("")}` : "");
+  renderTxLock();
+  if (newCats.length) { await loadSuggestions(); fillTxFilters(); }
+  await loadTransactions();
+}
+$("tx-lock").addEventListener("click", e => {
+  const act = e.target.dataset.lock;
+  if (!act) return;
+  txLockMsg = "";
+  if (act === "edit") { txEdit = new Map(); renderTxLock(); renderTxRows(); }
+  if (act === "cancel") leaveTxEdit();
+  if (act === "save") saveTxEdits();
 });
-$("tx-rows").addEventListener("keydown", e => {
-  if (e.key === "Enter" && !e.isComposing && e.target.dataset.tx) e.target.blur();
+$("tx-rows").addEventListener("input", e => {
+  const { tx, k } = e.target.dataset;
+  if (!tx || !txEdit) return;
+  const id = +tx, t = txEdit.get(id)?.t ?? txRows.find(t => t.id === id);
+  const ed = txEdit.get(id) ?? { t };
+  if (e.target.value === t[k]) delete ed[k]; else ed[k] = e.target.value;
+  if (Object.keys(ed).length > 1) txEdit.set(id, ed); else txEdit.delete(id);
+  e.target.classList.toggle("changed", k in ed);
+  txLockMsg = "";
+  renderTxLock();
 });
+tableKeys($("tx-rows"), el => el.dataset.tx ? `input[data-k="${el.dataset.k}"]` : null);
+window.addEventListener("beforeunload", e => { if (txEdit && txPending()) e.preventDefault(); });
+renderTxLock();
 $("tx-rows").addEventListener("click", e => {
   if (e.target.closest("input")) return;
   const tr = e.target.closest("tr[data-img-id]");

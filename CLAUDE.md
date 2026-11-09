@@ -37,7 +37,7 @@ static/js/                前端脚本，原生 JS、无构建步骤；普通 <s
   recognize.js            SOURCES、截图上传、待核对表（邮件导入共用）
   manual.js               手动输入、确认框；loadSuggestions（清单提示，别的页面也用）
   email-import.js         从邮件更新、没认出来的邮件
-  transactions.js / monthly.js / balances.js / security.js   各自的页面（交易页带「导出 CSV」：导出当前筛选出的交易）
+  transactions.js / monthly.js / balances.js / security.js   各自的页面（交易页：周期切换 + 高级筛选、「导出 CSV」导出当前筛选出的交易、和设置页一样上锁 / 统一保存（`txEdit`，`PATCH /api/transactions`）；收支页点种类跳到交易页（`txPreset`））
   trend.js                收支页的标签切换（本月 / 每月对比）和每月对比表（默认显示设置里标为「固定」的种类，其余自己加）；点格子跳到交易页（`txPreset`）
   settings.js             设置页标签、上锁 / 统一保存（`lockable`）、账户 / 币种 / 种类清单（拖动排序）
   opening.js / rates.js / email-settings.js                              设置里的期初余额、月汇率、邮件
