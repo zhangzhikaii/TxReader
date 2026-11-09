@@ -255,6 +255,21 @@ async function endDrag() {
   await loadSettings(); // edits in progress are kept: they are rendered again from listEdit
   loadSuggestions();
 }
+// Categories by number of transactions, most first; ties keep their order. Not locked, like dragging.
+$("set-categories-by-use").onclick = async () => {
+  const items = lists.categories;
+  const ids = items.map((it, i) => [it, i]).sort((a, b) => (b[0].used - a[0].used) || (a[1] - b[1])).map(x => x[0].id);
+  if (ids.join() === items.map(it => it.id).join()) return flash("set-status", "已经是按交易数排列的了");
+  if (!confirm("把种类按交易笔数从多到少重新排列？\n（笔数一样的保持原来的先后；之后还可以拖动调整）")) return;
+  try {
+    await api("/api/settings/categories/order", send("POST", { ids }));
+    flash("set-status", "已按交易数排序");
+  } catch (e) {
+    return flash("set-status", "顺序没有保存：" + e.message);
+  }
+  await loadSettings(); // edits in progress are kept
+  loadSuggestions();
+};
 $("view-settings").addEventListener("pointerup", endDrag);
 $("view-settings").addEventListener("pointercancel", endDrag);
 
