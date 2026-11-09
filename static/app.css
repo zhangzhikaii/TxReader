@@ -77,7 +77,11 @@ tr.suspect { background:var(--suspect); }
 tr.newday td { border-top:2px solid #6b7280; }
 tr.warn td.flag { color:#b91c1c; }
 tr.clickable { cursor:pointer; }
-tr.clickable:hover { background:#f9fafb; }
+/* Row hover in every table: a shade laid over the cells, so row / cell colours (income, trend) still show */
+tbody tr:hover > td { box-shadow:inset 0 0 0 9999px rgba(15,23,42,.06); }
+tbody tr:hover > td:first-child { box-shadow:inset 3px 0 0 var(--accent), inset 0 0 0 9999px rgba(15,23,42,.06); }
+tbody tr.clickable:hover > td { box-shadow:inset 0 0 0 9999px rgba(15,23,42,.09); }
+tbody tr.clickable:hover > td:first-child { box-shadow:inset 3px 0 0 var(--accent), inset 0 0 0 9999px rgba(15,23,42,.09); }
 tr.clickable.viewing { background:#ecfdf5; }
 .tag { display:inline-block; padding:0 6px; border-radius:4px; font-size:12px; background:#e9d5ff; color:#6b21a8; }
 .tag.done { background:#dcfce7; color:#166534; }
