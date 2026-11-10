@@ -90,9 +90,9 @@ def balance_sheet(month: str | None = None):
 
 
 @router.get("/api/monthly")
-def monthly_report(month: str | None = None):
-    """One month's income and expense by category and currency, converted, with the FX gain."""
-    return books.monthly(month)
+def monthly_report(month: str | None = None, year: str | None = None):
+    """One month's (or year's) income and expense by category and currency, converted, with the FX gain."""
+    return books.monthly(month, year=year)
 
 
 @router.get("/api/trend")

@@ -58,6 +58,7 @@ function showPeriod() {
   if (kind && kind !== txPeriod) { txPeriod = kind; save("tx.period", kind); }
   $("tx-period").value = kind ?? "custom";
   $("tx-prev").disabled = $("tx-next").disabled = !kind;
+  $("tx-today").textContent = (kind ?? txPeriod) === "day" ? "今天" : "本期";
   let label;
   if (kind) {
     const a = parseYmd(from), b = parseYmd(to);

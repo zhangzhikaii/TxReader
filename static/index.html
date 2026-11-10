@@ -192,9 +192,14 @@
    </div>
    <div id="motab-month">
     <div class="card month-bar">
-      <button class="secondary" id="mo-prev" title="上个月">‹</button>
-      <select id="mo-month" aria-label="月份"></select>
-      <button class="secondary" id="mo-next" title="下个月">›</button>
+      <select id="mo-period" aria-label="周期">
+        <option value="month">月</option>
+        <option value="year">年</option>
+      </select>
+      <button class="secondary" id="mo-prev" title="上一个周期">‹</button>
+      <span id="mo-range" class="period-label"></span>
+      <button class="secondary" id="mo-next" title="下一个周期">›</button>
+      <button class="secondary" id="mo-today" title="回到包含今天的周期">本期</button>
       <span id="mo-status" class="status"></span>
       <label class="toggle">排序<select id="mo-sort">
         <option value="list">设置页顺序</option>

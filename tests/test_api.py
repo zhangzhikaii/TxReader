@@ -543,6 +543,20 @@ def test_monthly_report(client):
     assert nov["converted_total"] == 0 and nov["fx_gain"]["日元"] is None and nov["base_grand_total"] is None
     assert client.get("/api/monthly?month=2026-1").status_code == 400
 
+    # A year adds up its months, each at its own rate; FX gain and the check from after the start month
+    y = books.monthly(year="2026", today=date(2026, 10, 20))
+    assert y["period"] == "year" and y["years"] == ["2026"]
+    assert [(c["name"], c["amounts"], c["converted"], c["count"]) for c in y["categories"][:1]] == [
+        ("饮食费", {"日元": -1300}, -62, 2)]  # -300 x 0.04 - 1000 x 0.05
+    assert (y["totals"], y["converted_total"]) == ({"日元": -1300, "人民币": 0.5}, -61.5)
+    assert (y["fx_gain_total"], y["base_grand_total"]) == (100, 38.5) and "2026-10" in y["fx_note"]
+    assert (y["check"], y["check_total"], y["balance_change"]) == ("ok", 50.5, 50.5)
+    client.put("/api/rates/2026-09/日元", json={"rate": None})
+    y = books.monthly(year="2026", today=date(2026, 10, 20))
+    assert y["missing_rates"] == {"日元": ["2026-09"]} and y["converted_total"] is None and y["check"] is None
+    assert client.get("/api/monthly?year=2025").status_code == 400
+    assert client.get("/api/monthly?year=26").status_code == 400
+
 
 def test_trend(client):
     from datetime import date

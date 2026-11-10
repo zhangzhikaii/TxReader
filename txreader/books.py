@@ -301,22 +301,29 @@ def balances(month: str | None = None, today: date | None = None) -> dict:
 
 # ---------- monthly report ----------
 
-def monthly(month: str | None = None, today: date | None = None) -> dict:
+def monthly(month: str | None = None, today: date | None = None, year: str | None = None) -> dict:
     """Income and expense of one month by category and currency (docs/plan.md, 月度收支):
 
-    {"month", "months" (to choose from, newest first), "base", "currencies": [columns],
+    {"period": "month", "month", "months" (to choose from, newest first), "years" (likewise),
+     "base", "currencies": [columns],
      "categories": [{"name", "amounts": {currency: sum}, "converted": in base or None,
                      "count": number of transactions}],
      "totals": {currency: sum}, "converted": {currency: in base or None}, "converted_total",
      "rates": {currency: rate or None},
      "fx_gain": {currency: gain or None} or None, "fx_gain_total", "fx_note",
      "base_total": {currency: converted + fx_gain}, "base_grand_total",
-     "balance_change": the balance sheet's change for the month, "check": "ok" / "diff" / None}
+     "balance_change": the balance sheet's change for the month, "check": "ok" / "diff" / None,
+     "check_total": the base_grand_total compared, "check_diff": [months that disagree],
+     "missing_rates": {currency: [months with flows but no rate]}}
 
     Sums are in each currency as booked (no rate involved); converted = sum x this month's rate.
     The FX gain comes from the balance sheet (last month's holding x the rate change), so
-    converted + FX gain should equal the balance sheet's change; "check" says whether it does."""
+    converted + FX gain should equal the balance sheet's change; "check" says whether it does.
+
+    With `year` instead, the same for a whole year: see `_yearly`."""
     today = today or date.today()
+    if year is not None:
+        return _yearly(year, today)
     with connect() as conn:
         months = _all_months(conn, today)[::-1]
         month = _check_month(month) if month else months[0]
@@ -345,11 +352,14 @@ def monthly(month: str | None = None, today: date | None = None) -> dict:
                            "converted": _sum(conv(c, v) for c, v in amounts.items())})
     totals = {c: round(sum(f.get(c, 0) for f in flows.values()), 2) for c in currencies}
     converted, converted_total = _convert(totals, rates)
-    out = {"month": month, "months": months, "base": base[0] if base else None, "currencies": currencies,
+    out = {"period": "month", "month": month, "months": months, "years": _years(months),
+           "base": base[0] if base else None, "currencies": currencies,
            "categories": categories, "totals": totals, "converted": converted, "converted_total": converted_total,
            "rates": {c: rates.get(c) for c in currencies},
            "fx_gain": None, "fx_gain_total": None, "fx_note": None,
-           "base_total": {}, "base_grand_total": None, "balance_change": None, "check": None}
+           "base_total": {}, "base_grand_total": None, "balance_change": None, "check": None,
+           "check_total": None, "check_diff": [],
+           "missing_rates": {c: [month] for c in currencies if totals[c] and c not in rates}}
 
     # The FX gain needs last month's holdings, so only after the start month
     if not start:
@@ -370,6 +380,71 @@ def monthly(month: str | None = None, today: date | None = None) -> dict:
     if out["base_grand_total"] is not None and out["balance_change"] is not None:
         # Each cell is rounded on its own, so allow a few cents
         out["check"] = "ok" if abs(out["base_grand_total"] - out["balance_change"]) < 0.05 else "diff"
+        out["check_total"] = out["base_grand_total"]
+        out["check_diff"] = [month] if out["check"] == "diff" else []
+    return out
+
+
+def _years(months: list[str]) -> list[str]:
+    return sorted({m[:4] for m in months}, reverse=True)
+
+
+def _yearly(year: str, today: date) -> dict:
+    """`monthly` for every month of a year (within the months there are), added up. Each month
+    is converted at its own rate. The FX gain and the check only cover months after the start
+    month, as in each month's report; the check is done when every one of those months can be
+    checked, and compares their totals with the balance sheet's changes over them."""
+    if not isinstance(year, str) or not re.fullmatch(r"\d{4}", year):
+        raise ValueError(f"年份格式不对：{year}，应为 2026")
+    with connect() as conn:
+        inside = [m for m in _all_months(conn, today) if m[:4] == year]
+    if not inside:
+        raise ValueError(f"{year} 年没有数据")
+    reps = [monthly(m, today) for m in inside]
+    last = reps[-1]
+
+    currencies = []
+    for r in reps:
+        currencies += [c for c in r["currencies"] if c not in currencies]
+    cats: dict[str, dict] = {}
+    for r in reps:
+        for c in r["categories"]:
+            row = cats.setdefault(c["name"], {"name": c["name"], "amounts": {}, "count": 0, "conv": []})
+            for cur, v in c["amounts"].items():
+                row["amounts"][cur] = round(row["amounts"].get(cur, 0) + v, 2)
+            row["count"] += c["count"]
+            row["conv"].append(c["converted"])
+    categories = [{"name": c["name"], "amounts": c["amounts"], "count": c["count"],
+                   "converted": _sum(c["conv"])} for c in cats.values()]
+    # A currency with nothing in a month counts as 0 there, even without that month's rate
+    per = lambda key, c: [r[key].get(c, 0.0) if r["totals"].get(c) else 0.0 for r in reps]
+    totals = {c: round(sum(per("totals", c)), 2) for c in currencies}
+    converted = {c: _sum(per("converted", c)) for c in currencies}
+
+    out = {"period": "year", "year": year, "month": None, "months": last["months"], "years": last["years"],
+           "base": last["base"], "currencies": currencies, "categories": categories,
+           "totals": totals, "converted": converted, "converted_total": _sum(r["converted_total"] for r in reps),
+           "rates": {}, "fx_gain": None, "fx_gain_total": None, "fx_note": None,
+           "base_total": {c: _sum(r["base_total"].get(c, 0.0) for r in reps) for c in currencies},
+           "base_grand_total": _sum(r["base_grand_total"] for r in reps),
+           "balance_change": None, "check": None, "check_total": None, "check_diff": [], "missing_rates": {}}
+    for r in reps:
+        for c, ms in r["missing_rates"].items():
+            out["missing_rates"].setdefault(c, []).extend(ms)
+
+    with_fx = [r for r in reps if r["fx_gain"] is not None]
+    if not with_fx:
+        out["fx_note"] = reps[0]["fx_note"]
+    else:
+        out["fx_gain"] = {c: _sum(r["fx_gain"].get(c, 0.0) for r in with_fx) for c in currencies}
+        out["fx_gain_total"] = _sum(r["fx_gain_total"] for r in with_fx)
+        if len(with_fx) < len(reps):
+            out["fx_note"] = f"起始月和之前的月份没有汇差，汇差从 {with_fx[0]['month']} 算起"
+        if all(r["check"] for r in with_fx):
+            out["check_total"] = _sum(r["check_total"] for r in with_fx)
+            out["balance_change"] = _sum(r["balance_change"] for r in with_fx)
+            out["check_diff"] = [r["month"] for r in with_fx if r["check"] == "diff"]
+            out["check"] = "diff" if out["check_diff"] else "ok"
     return out
 
 

@@ -14,7 +14,7 @@ txreader/db.py            SQLite 表结构、旧库升级（`_migrate`）、账�
 txreader/store.py         识别入库流程、待核对行、确认入库、手动输入、交易、导出 CSV（`export_csv`，不记录导出）
 txreader/lists.py         账户 / 币种 / 种类清单：输入时的提示（`offered`）、找出新名称（`unknown`）、设置页的增删改排序（`apply`：一批改动一起保存）
 txreader/devtools.py      开发用命令：`python -m txreader.devtools clear`（删除所有交易，要输入 yes）、`seed <file>`（从 seed/ 导入 CSV 并登记清单）
-txreader/books.py         期初余额（起始月 + 账户 × 币种）、月汇率（1 外币 = 多少本位币，手填）、账户结余（`balances`：月底结余、折算、汇差、月度差额）；月度收支（`monthly`：种类 × 币种、折算、汇差、和结余页核对）；每月对比（`trend`：各种类最近几个月逐月的数字，页面上选要比的种类）
+txreader/books.py         期初余额（起始月 + 账户 × 币种）、月汇率（1 外币 = 多少本位币，手填）、账户结余（`balances`：月底结余、折算、汇差、月度差额）；月度收支（`monthly`：种类 × 币种、折算、汇差、和结余页核对；`year=` 时把一年各月加起来）；每月对比（`trend`：各种类最近几个月逐月的数字，页面上选要比的种类）
 txreader/matching.py      新识别的行与库里已有行比对（跳过 / 合并 / 疑似重复 / 新增）
 txreader/mail.py          邮件导入：Outlook OAuth（Client ID / secret / 令牌存在 config 表）、邮件规则（`email_rules`：发件人、标题、三个正则）、读取上次之后的邮件（`fetch`）、识别、重新识别没认出来的
 txreader/auth.py          单用户密码登录、会话（闲置超时 + 30 天上限）、登录记录、错误次数锁定；`python -m txreader.auth` 生成密码哈希（填到 `.env`）

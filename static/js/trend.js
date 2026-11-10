@@ -16,7 +16,7 @@ function loadMonthlyPage() {
     trKeepPick = false;
     loadTrend(tr?.end ?? null);
   }
-  else loadMonthly($("mo-month").value || null);
+  else loadMonthly(moKey());
 }
 for (const b of document.querySelectorAll("[data-motab]")) b.onclick = () => { showMoTab(b.dataset.motab); loadMonthlyPage(); };
 showMoTab(moTab);
