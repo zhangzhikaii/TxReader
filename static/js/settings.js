@@ -78,9 +78,10 @@ window.addEventListener("beforeunload", e => { if (pendingEdits(setTab)) e.preve
 
 // ---------- account / currency / category lists ----------
 const LIST_LABELS = { accounts: "账户", currencies: "币种", categories: "种类" };
-let lists = { accounts: [], currencies: [], categories: [] };
+let lists = { accounts: [], currencies: [], categories: [], account_types: [] };
+const typeLabel = key => lists.account_types.find(t => t.key === (key ?? ""))?.label ?? key;
 // While a list is being edited: new names by id, ids to delete, names to add, and for accounts
-// the currencies to add / remove by account id
+// the currencies to add / remove and the new type by account id
 const listEdit = { accounts: null, currencies: null, categories: null };
 async function loadSettings() {
   try { lists = await api("/api/settings"); } catch (e) { return flash("set-status", "读取失败：" + e.message); }
@@ -105,6 +106,10 @@ function renderList(kind) {
       extra = `<td>${it.currencies.map(chip).join("")}` +
         add.map(c => `<span class="chip added" title="保存后加上">${esc(c)}<button data-act="undo-add-cur" data-cur="${esc(c)}" title="不加了">×</button></span>`).join("") +
         (live && addable.length ? `<select class="add-cur" data-act="add-cur"><option value="">＋ 币种</option>${addable.map(c => `<option>${esc(c.name)}</option>`).join("")}</select>` : "") + `</td>`;
+      const type = ed?.types[it.id] ?? it.type;
+      extra = (live ? `<td><select data-act="type" aria-label="账户类型">${lists.account_types.map(t =>
+                 `<option value="${t.key}" ${t.key === type ? "selected" : ""}>${esc(t.label)}</option>`).join("")}</select></td>`
+               : `<td>${type ? `<span class="tag">${esc(typeLabel(type))}</span>` : `<span class="muted">${esc(typeLabel(""))}</span>`}</td>`) + extra;
     }
     if (kind === "currencies") extra = `<td>${it.is_base ? '<span class="tag done">本位币</span>' : ""}</td>`;
     if (kind === "categories") {
@@ -120,9 +125,9 @@ function renderList(kind) {
       <td>${name}</td>${extra}<td class="num">${it.used}</td><td>${del}</td></tr>`;
   });
   const added = (ed?.added ?? []).map((n, i) => `<tr class="added"><td></td><td>${esc(n)} <span class="tag">新增</span></td>` +
-    (kind === "accounts" ? `<td class="muted">保存后再加币种</td>` : kind === "categories" ? `<td class="muted">保存后再设</td>` : "<td></td>") +
+    (kind === "accounts" ? `<td class="muted">保存后再设</td><td class="muted">保存后再加币种</td>` : kind === "categories" ? `<td class="muted">保存后再设</td>` : "<td></td>") +
     `<td class="num">0</td><td><button class="icon" data-act="unadd" data-i="${i}" title="不添加了">✕</button></td></tr>`);
-  $("set-" + kind).innerHTML = [...rows, ...added].join("") || `<tr><td colspan="5" class="empty">还没有${LIST_LABELS[kind]}</td></tr>`;
+  $("set-" + kind).innerHTML = [...rows, ...added].join("") || `<tr><td colspan="6" class="empty">还没有${LIST_LABELS[kind]}</td></tr>`;
   $(`set-${kind}-new`).closest(".add-row").hidden = !ed;
 }
 // The edits of one list, in the order they are saved: { text (for the confirmation), op }
@@ -141,6 +146,11 @@ function listChanges(kind) {
     if (ed.deleted.has(it.id) || !(it.id in ed.fixed) || ed.fixed[it.id] === it.fixed) continue;
     out.push({ text: `种类「${it.name}」${ed.fixed[it.id] ? "设为固定" : "不再是固定"}`, op: { op: "set_fixed", kind, id: it.id, fixed: ed.fixed[it.id] } });
   }
+  if (kind === "accounts") for (const it of items) {
+    if (ed.deleted.has(it.id) || !(it.id in ed.types) || ed.types[it.id] === it.type) continue;
+    out.push({ text: `账户「${it.name}」类型从「${typeLabel(it.type)}」改为「${typeLabel(ed.types[it.id])}」`,
+               op: { op: "set_type", kind, id: it.id, type: ed.types[it.id] } });
+  }
   for (const name of ed.added) out.push({ text: `新增${label}「${name}」`, op: { op: "add", kind, name } });
   if (kind === "accounts") for (const it of items) {
     if (ed.deleted.has(it.id)) continue;
@@ -152,7 +162,7 @@ function listChanges(kind) {
 for (const kind of Object.keys(LIST_LABELS)) lockable(kind, {
   label: LIST_LABELS[kind],
   editing: () => !!listEdit[kind],
-  begin() { listEdit[kind] = { names: {}, deleted: new Set(), added: [], addCur: {}, rmCur: {}, fixed: {} }; renderList(kind); },
+  begin() { listEdit[kind] = { names: {}, deleted: new Set(), added: [], addCur: {}, rmCur: {}, fixed: {}, types: {} }; renderList(kind); },
   end() { listEdit[kind] = null; renderList(kind); },
   changes: () => listChanges(kind).map(c => c.text),
   save: () => api("/api/settings/batch", send("POST", { ops: listChanges(kind).map(c => c.op) })),
@@ -205,6 +215,11 @@ $("view-settings").addEventListener("change", e => {
   const tr = e.target.closest("tr[data-kind]");
   if (e.target.dataset.act === "fixed" && tr && listEdit.categories) {
     listEdit.categories.fixed[tr.dataset.id] = e.target.checked;
+    lockMsg = "";
+    return renderLock();
+  }
+  if (e.target.dataset.act === "type" && tr && listEdit.accounts) {
+    listEdit.accounts.types[tr.dataset.id] = e.target.value;
     lockMsg = "";
     return renderLock();
   }

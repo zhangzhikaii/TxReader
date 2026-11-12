@@ -188,6 +188,14 @@ table.sheet tbody.foot tr.strong td { font-weight:600; }
 .jump { cursor:pointer; }
 .jump:hover { color:var(--accent); text-decoration:underline; }
 table.sheet td .count { font-size:12px; color:var(--muted); margin-left:6px; }
+/* 结余: accounts grouped by type, each group headed by its subtotals */
+table.sheet tr.group-head td { font-weight:600; background:#f3f4f6; border-top:1px solid #d1d5db; }
+table.sheet tr.in-group td:first-child { padding-left:24px; }
+.hero .split { display:flex; flex-wrap:wrap; gap:6px 20px; margin-top:12px; padding-top:10px; border-top:1px solid var(--line);
+               font-size:14px; font-variant-numeric:tabular-nums; }
+.hero .split .name { color:var(--muted); margin-right:6px; }
+.hero .split .neg { color:#b91c1c; }
+.hero .split .missing { font-size:14px; }
 table.sheet td.blank { color:var(--line); }
 .warn-box { background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:10px 12px; font-size:14px; margin-bottom:12px; }
 /* Confirmation before storing manual rows */

@@ -23,6 +23,7 @@ class ListOp(BaseModel):
     id: int | None = None
     name: str | None = None
     fixed: bool | None = None
+    type: str | None = None
 
 
 class ListOps(BaseModel):
@@ -44,6 +45,7 @@ def add_list_item(kind: str, body: NameBody):
 class ListItemEdit(BaseModel):
     name: str | None = None
     fixed: bool | None = None
+    type: str | None = None
 
 
 @router.patch("/{kind}/{item_id}")

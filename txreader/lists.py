@@ -10,6 +10,16 @@ from .errors import NotFound
 KINDS = {"accounts": "account", "currencies": "currency", "categories": "category"}  # table -> transactions column
 KIND_LABELS = {"accounts": "账户", "currencies": "币种", "categories": "种类"}
 
+# What kind of money an account holds; the balance sheet groups accounts by it, in this order.
+# '' (not chosen yet) comes last.
+ACCOUNT_TYPES = {"liquid": "活期", "deposit": "定期", "invest": "投资", "credit": "信用卡", "other": "其他"}
+UNSET_TYPE = "未分类"
+
+
+def type_list() -> list[dict]:
+    """[{"key", "label"}] in display order, ending with the unset one."""
+    return [{"key": k, "label": v} for k, v in ACCOUNT_TYPES.items()] + [{"key": "", "label": UNSET_TYPE}]
+
 
 def _check_kind(kind: str) -> str:
     if kind not in KINDS:
@@ -70,7 +80,7 @@ def settings() -> dict:
     with connect() as conn:
         out = {}
         for table, col in KINDS.items():
-            extra = {"currencies": ", is_base", "categories": ", fixed"}.get(table, "")
+            extra = {"accounts": ", type", "currencies": ", is_base", "categories": ", fixed"}.get(table, "")
             out[table] = [dict(r) for r in conn.execute(
                 f"SELECT id, name{extra},"
                 f" (SELECT COUNT(*) FROM transactions t WHERE t.{col} = x.name) AS used"
@@ -88,6 +98,7 @@ def settings() -> dict:
             c["is_base"] = bool(c["is_base"])
         for c in out["categories"]:
             c["fixed"] = bool(c["fixed"])
+        out["account_types"] = type_list()
         return out
 
 
@@ -124,7 +135,7 @@ def add(kind: str, name: str) -> int:
 
 def update(kind: str, item_id: int, changes: dict) -> None:
     """changes: name (renames the transactions too); for categories also fixed (compared month
-    by month by default). The base currency is fixed (人民币): changing it would make every rate
+    by month by default); for accounts also type (an ACCOUNT_TYPES key, or '' for none). The base currency is fixed (人民币): changing it would make every rate
     typed in so far wrong."""
     kind = _check_kind(kind)
     with connect() as conn:
@@ -133,6 +144,12 @@ def update(kind: str, item_id: int, changes: dict) -> None:
             if kind != "categories":
                 raise ValueError("只有种类可以设为固定")
             conn.execute("UPDATE categories SET fixed = ? WHERE id = ?", (int(bool(changes["fixed"])), item_id))
+        if changes.get("type") is not None:
+            if kind != "accounts":
+                raise ValueError("只有账户有类型")
+            if changes["type"] and changes["type"] not in ACCOUNT_TYPES:
+                raise ValueError(f"没有这种账户类型：{changes['type']}")
+            conn.execute("UPDATE accounts SET type = ? WHERE id = ?", (changes["type"], item_id))
         if changes.get("name") is not None:
             name = _clean_name(changes["name"])
             if name != old["name"]:
@@ -204,12 +221,13 @@ def remove_account_currency(account_id: int, currency: str) -> None:
 def apply(ops: list[dict]) -> None:
     """The settings page's edits of one list, saved together: all or nothing. Each op is
     {"op": "add", "kind", "name"}, {"op": "rename", "kind", "id", "name"}, {"op": "delete", "kind", "id"},
-    {"op": "set_fixed", "kind": "categories", "id", "fixed"},
+    {"op": "set_fixed", "kind": "categories", "id", "fixed"}, {"op": "set_type", "kind": "accounts", "id", "type"},
     {"op": "add_currency", "id" (account), "name"} or {"op": "remove_currency", "id", "name"}."""
     actions = {
         "add": lambda o: add(o["kind"], o.get("name")),
         "rename": lambda o: update(o["kind"], o["id"], {"name": o.get("name")}),
         "set_fixed": lambda o: update(o["kind"], o["id"], {"fixed": bool(o.get("fixed"))}),
+        "set_type": lambda o: update(o["kind"], o["id"], {"type": o.get("type") or ""}),
         "delete": lambda o: delete(o["kind"], o["id"]),
         "add_currency": lambda o: add_account_currency(o["id"], o.get("name")),
         "remove_currency": lambda o: remove_account_currency(o["id"], o.get("name")),

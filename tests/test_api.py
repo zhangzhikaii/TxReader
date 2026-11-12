@@ -479,10 +479,33 @@ def test_balance_sheet(client):
     # change = this month's flows at this month's rate + FX gain: -1000 x 0.05 + 0.5 + 100
     assert octo["change"] == round(-1000 * 0.05 + 0.5 + octo["fx_gain_total"], 2)
 
+    # Account types: subtotals by type, unset ones last
+    assert [(g["type"], g["total"]) for g in octo["groups"]] == [("", 850.5)]
+    assert client.post("/api/settings/batch", json={"ops": [
+        {"op": "set_type", "kind": "accounts", "id": ids["某银行"], "type": "liquid"},
+        {"op": "set_type", "kind": "accounts", "id": ids["现金"], "type": "nope"}]}).status_code == 400
+    assert {a["type"] for a in client.get("/api/settings").json()["accounts"]} == {""}  # all or nothing
+    assert client.post("/api/settings/batch", json={"ops": [
+        {"op": "set_type", "kind": "categories", "id": 1, "type": "liquid"}]}).status_code == 400
+    client.post("/api/settings/batch", json={"ops": [
+        {"op": "set_type", "kind": "accounts", "id": ids["某银行"], "type": "liquid"},
+        {"op": "set_type", "kind": "accounts", "id": ids["现金"], "type": "invest"}]})
+    settings = client.get("/api/settings").json()
+    assert [(a["name"], a["type"]) for a in settings["accounts"]] == [("现金", "invest"), ("某银行", "liquid")]
+    assert settings["account_types"][0] == {"key": "liquid", "label": "活期"}
+    octo = books.balances("2026-10", today=date(2026, 10, 20))
+    assert [(a["name"], a["type"]) for a in octo["accounts"]] == [("现金", "invest"), ("某银行", "liquid")]
+    assert [(g["label"], g["totals"], g["total"]) for g in octo["groups"]] == [
+        ("活期", {"日元": 0, "人民币": 400.5}, 400.5), ("投资", {"日元": 9000, "人民币": 0}, 450)]
+    client.post("/api/settings/batch", json={"ops": [
+        {"op": "set_type", "kind": "accounts", "id": ids["现金"], "type": ""}]})
+    assert [a["type"] for a in client.get("/api/settings").json()["accounts"]] == ["", "liquid"]
+
     # A month without a rate: what can't be converted stays empty
     nov = client.get("/api/balances?month=2026-11").json()
     assert nov["converted"]["日元"] is None and nov["total"] is None and nov["change"] is None
     assert nov["fx_gain"]["日元"] is None
+    assert [(g["label"], g["total"]) for g in nov["groups"]] == [("活期", 400.5), ("未分类", None)]
     assert client.get("/api/balances?month=2026-08").status_code == 400
 
 

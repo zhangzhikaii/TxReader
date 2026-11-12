@@ -46,25 +46,43 @@ async function loadBalances(month) {
     delta = `<span class="chg ${dir}">${{ up: "▲", down: "▼", flat: "＝" }[dir]} ${fmtAmount(Math.abs(bal.change))}${pct}</span>` +
             `<span class="vs">较上月（上月 ${fmtAmount(bal.prev_total)}）</span>`;
   }
+  // Under it, the same total split by account type (once any account has a type)
+  const split = grouped() ? `<div class="split">${bal.groups.map(g =>
+    `<span class="part"><span class="name">${esc(g.label)}</span>` +
+    (g.total == null ? `<span class="missing">缺汇率</span>` : `<span class="${g.total < 0 ? "neg" : ""}">${fmtAmount(g.total)}</span>`) +
+    `</span>`).join("")}</div>` : "";
   $("bal-tiles").innerHTML = `<div class="hero">
     <div class="label">${esc(base)}合计 · ${monthEnd(bal.month)}</div>
     <div class="row">
       ${bal.total == null ? `<span class="missing">缺汇率，算不出来</span>`
                           : `<span class="total ${bal.total < 0 ? "neg" : ""}">${fmtAmount(bal.total)}<span class="unit">${esc(base)}</span></span>`}
       <span class="delta">${delta}</span>
-    </div></div>`;
+    </div>${split}</div>`;
 }
 $("bal-month").addEventListener("change", e => loadBalances(e.target.value));
 $("bal-prev").onclick = () => { const i = bal.months.indexOf(bal.month); loadBalances(bal.months[i + 1]); };
 $("bal-next").onclick = () => { const i = bal.months.indexOf(bal.month); loadBalances(bal.months[i - 1]); };
-// Account rows; the totals below always count every account
+// Grouped by account type only once some account has one (all unset: one plain list)
+const grouped = () => bal.groups.some(g => g.type);
+// Account rows; the totals below always count every account. When grouped, each group starts
+// with a row of its subtotals (counting its hidden accounts too).
 function renderBalanceRows() {
   const cur = bal.currencies;
   const quiet = a => !a.count && Object.values(a.balances).every(v => !v);
-  const rows = $("bal-hide-quiet").checked ? bal.accounts.filter(a => !quiet(a)) : bal.accounts;
-  const hidden = bal.accounts.length - rows.length;
-  $("bal-rows").innerHTML = rows.map(a =>
-    `<tr><td>${esc(a.name)}${a.count ? `<span class="count">${a.count} 笔</span>` : ""}</td>${cur.map(c => moneyCell(a.balances[c])).join("")}</tr>`).join("") ||
+  const shown = $("bal-hide-quiet").checked ? bal.accounts.filter(a => !quiet(a)) : bal.accounts;
+  const hidden = bal.accounts.length - shown.length;
+  const row = a => `<tr${grouped() ? ' class="in-group"' : ""}><td>${esc(a.name)}${a.count ? `<span class="count">${a.count} 笔</span>` : ""}</td>${cur.map(c => moneyCell(a.balances[c])).join("")}</tr>`;
+  let html;
+  if (grouped()) {
+    html = bal.groups.map(g => {
+      const rows = shown.filter(a => (a.type || "") === g.type);
+      if (!rows.length && Object.values(g.totals).every(v => !v)) return "";
+      return `<tr class="group-head"><td>${esc(g.label)}</td>${cur.map(c => moneyCell(g.totals[c])).join("")}</tr>` + rows.map(row).join("");
+    }).join("");
+  } else {
+    html = shown.map(row).join("");
+  }
+  $("bal-rows").innerHTML = html ||
     `<tr><td colspan="${cur.length + 1}" class="empty">${bal.accounts.length ? "这个月没有交易、也没有余额的账户都隐藏了" : "还没有账户"}</td></tr>`;
   flash("bal-status", hidden ? `隐藏了 ${hidden} 个账户` : "");
 }

@@ -14,7 +14,7 @@ txreader/db.py            SQLite 表结构、旧库升级（`_migrate`）、账�
 txreader/store.py         识别入库流程、待核对行、确认入库、手动输入、交易、导出 CSV（`export_csv`，不记录导出）
 txreader/lists.py         账户 / 币种 / 种类清单：输入时的提示（`offered`）、找出新名称（`unknown`）、设置页的增删改排序（`apply`：一批改动一起保存）
 txreader/devtools.py      开发用命令：`python -m txreader.devtools clear`（删除所有交易，要输入 yes）、`seed <file>`（从 seed/ 导入 CSV 并登记清单）
-txreader/books.py         期初余额（起始月 + 账户 × 币种）、月汇率（1 外币 = 多少本位币，手填）、账户结余（`balances`：月底结余、折算、汇差、月度差额）；月度收支（`monthly`：种类 × 币种、折算、汇差、和结余页核对；`year=` 时把一年各月加起来）；每月对比（`trend`：各种类最近几个月逐月的数字，页面上选要比的种类）
+txreader/books.py         期初余额（起始月 + 账户 × 币种）、月汇率（1 外币 = 多少本位币，手填）、账户结余（`balances`：月底结余、折算、汇差、月度差额、按账户类型的小计 `groups`）；月度收支（`monthly`：种类 × 币种、折算、汇差、和结余页核对；`year=` 时把一年各月加起来）；每月对比（`trend`：各种类最近几个月逐月的数字，页面上选要比的种类）
 txreader/matching.py      新识别的行与库里已有行比对（跳过 / 合并 / 疑似重复 / 新增）
 txreader/mail.py          邮件导入：Outlook OAuth（Client ID / secret / 令牌存在 config 表）、邮件规则（`email_rules`：发件人、标题、三个正则）、读取上次之后的邮件（`fetch`）、识别、重新识别没认出来的
 txreader/auth.py          单用户密码登录、会话（闲置超时 + 30 天上限）、登录记录、错误次数锁定；`python -m txreader.auth` 生成密码哈希（填到 `.env`）
@@ -50,7 +50,7 @@ tests/test_email.py       邮件导入全流程测试（假的微软服务器：
 tests/test_samples.py     用 samples/ 里的真实截图对照期望结果（没有 samples/ 时自动跳过）
 ```
 
-数据流：截图（按哈希存成 WebP，传过的直接用上次结果）→ OCR Box → 来源解析器 → `Tx` → `build_records` → `match_rows` 与库里比对 → 新行存为 `ocr_rows`（pending）→ 前端核对、修改（存为 draft）→ 确认后写入 `transactions`（`origin = screenshot`）→ 在交易页按筛选条件导出 CSV（不记录导出）。手动输入直接写入 `transactions`（`origin = manual`，没有 `ocr_row_id`）。邮件：点「从邮件更新」→ 读 `email_last_fetch` 到现在收到的邮件 → 按规则挑出、存进 `emails`（按 message_id 去重，认不出来的也存，可以改规则后重新识别）→ 识别出的行存为 `ocr_rows`（`source = email`，`email_id`，没有 `image_id`；规则的账户 / 币种 / 种类放在 `draft` 里）→ 和截图一样核对入库（`origin = email`）。账户 / 币种 / 种类清单在 `accounts`、`currencies`、`account_currencies`（一个账户可有多个币种）、`categories`，各有 `sort`，币种有 `is_base`，种类有 `fixed`（每月对比默认显示）：截图入库时自动登记，手动输入遇到新的要用户在确认框里同意（接口参数 `add_accounts`，否则 409）；交易里仍存名称文字，设置页改名时一起改。
+数据流：截图（按哈希存成 WebP，传过的直接用上次结果）→ OCR Box → 来源解析器 → `Tx` → `build_records` → `match_rows` 与库里比对 → 新行存为 `ocr_rows`（pending）→ 前端核对、修改（存为 draft）→ 确认后写入 `transactions`（`origin = screenshot`）→ 在交易页按筛选条件导出 CSV（不记录导出）。手动输入直接写入 `transactions`（`origin = manual`，没有 `ocr_row_id`）。邮件：点「从邮件更新」→ 读 `email_last_fetch` 到现在收到的邮件 → 按规则挑出、存进 `emails`（按 message_id 去重，认不出来的也存，可以改规则后重新识别）→ 识别出的行存为 `ocr_rows`（`source = email`，`email_id`，没有 `image_id`；规则的账户 / 币种 / 种类放在 `draft` 里）→ 和截图一样核对入库（`origin = email`）。账户 / 币种 / 种类清单在 `accounts`、`currencies`、`account_currencies`（一个账户可有多个币种）、`categories`，各有 `sort`，账户有 `type`（`lists.ACCOUNT_TYPES`：活期 / 定期 / 投资 / 信用卡 / 其他，空 = 未分类；结余页按它分组小计），币种有 `is_base`，种类有 `fixed`（每月对比默认显示）：截图入库时自动登记，手动输入遇到新的要用户在确认框里同意（接口参数 `add_accounts`，否则 409）；交易里仍存名称文字，设置页改名时一起改。
 
 ## 约定
 

@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     id         INTEGER PRIMARY KEY,
     name       TEXT NOT NULL UNIQUE,
     sort       INTEGER NOT NULL DEFAULT 0,
+    type       TEXT NOT NULL DEFAULT '',   -- lists.ACCOUNT_TYPES key; '' until one is chosen
     created_at TEXT NOT NULL
 );
 
@@ -238,6 +239,11 @@ def _migrate(conn) -> None:
     if "fixed" not in cols:
         conn.execute("ALTER TABLE categories ADD COLUMN fixed INTEGER NOT NULL DEFAULT 0")
         conn.execute("UPDATE categories SET fixed = 1 WHERE name IN ('饮食费', '交通费', '房租', '水电煤')")
+
+    # Accounts gained a type (活期 / 定期 / 投资 ...); existing ones start out unset
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(accounts)")}
+    if "type" not in cols:
+        conn.execute("ALTER TABLE accounts ADD COLUMN type TEXT NOT NULL DEFAULT ''")
 
     # The lists started out empty: fill them once from the transactions so far
     if not conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():

@@ -11,6 +11,7 @@ from datetime import date
 
 from . import errors
 from .db import connect, transaction
+from .lists import type_list
 
 MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
@@ -230,7 +231,9 @@ def balances(month: str | None = None, today: date | None = None) -> dict:
 
     {"month", "start_month", "months" (to choose from), "base",
      "currencies": [columns, list order],
-     "accounts": [{"name", "balances": {currency: amount}, "count": transactions this month}],
+     "accounts": [{"name", "type", "balances": {currency: amount}, "count": transactions this month}],
+     "groups": [{"type", "label", "totals": {currency: amount}, "converted": {currency: in base or None},
+                 "total": in base or None}] for the account types in use, in lists.ACCOUNT_TYPES order,
      "rates": {currency: rate or None}, "totals": {currency: amount},
      "converted": {currency: in base or None}, "total": sum in base or None,
      "fx_gain": {currency: gain or None}, "fx_gain_total", "prev_total", "change"}
@@ -253,14 +256,14 @@ def balances(month: str | None = None, today: date | None = None) -> dict:
 
         # Rows: accounts in list order, each with its currencies; columns: currencies in use
         order = [r[0] for r in conn.execute("SELECT name FROM currencies ORDER BY sort, id")]
-        accounts = {r[0]: {"name": r[0], "balances": {}, "count": 0} for r in conn.execute(
-            "SELECT name FROM accounts ORDER BY sort, id")}
+        accounts = {r[0]: {"name": r[0], "type": r[1], "balances": {}, "count": 0} for r in conn.execute(
+            "SELECT name, type FROM accounts ORDER BY sort, id")}
         for r in conn.execute(
                 "SELECT a.name, c.name FROM account_currencies ac"
                 " JOIN accounts a ON a.id = ac.account_id JOIN currencies c ON c.id = ac.currency_id"):
             accounts[r[0]]["balances"][r[1]] = 0.0
         for (a, c), v in holdings.items():
-            accounts.setdefault(a, {"name": a, "balances": {}, "count": 0})["balances"][c] = v
+            accounts.setdefault(a, {"name": a, "type": "", "balances": {}, "count": 0})["balances"][c] = v
         # For the page's "only accounts with something this month" (any currency)
         for r in conn.execute("SELECT account, COUNT(*) FROM transactions WHERE substr(date, 1, 7) = ?"
                               " GROUP BY account", (month.replace("-", "/"),)):
@@ -272,8 +275,19 @@ def balances(month: str | None = None, today: date | None = None) -> dict:
         totals = {c: 0.0 for c in currencies} | _by_currency(holdings)
         converted, total = _convert(totals, rates)
 
+        # Subtotals by account type (every account counts, shown on the page or not)
+        groups = []
+        for t in type_list():
+            members = [acc for acc in accounts.values() if (acc["type"] or "") == t["key"]]
+            if not members:
+                continue
+            sub = {c: round(sum(acc["balances"].get(c, 0) for acc in members), 2) for c in currencies}
+            sub_conv, sub_total = _convert(sub, rates)
+            groups.append({"type": t["key"], "label": t["label"], "totals": sub,
+                           "converted": sub_conv, "total": sub_total})
+
         out = {"month": month, "start_month": start, "months": months, "base": base[0] if base else None,
-               "currencies": currencies, "accounts": list(accounts.values()),
+               "currencies": currencies, "accounts": list(accounts.values()), "groups": groups,
                "rates": {c: rates.get(c) for c in currencies}, "totals": totals,
                "converted": converted, "total": total,
                "fx_gain": {c: None for c in currencies}, "fx_gain_total": None, "prev_total": None, "change": None}
