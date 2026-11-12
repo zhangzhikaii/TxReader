@@ -187,6 +187,10 @@ def delete(kind: str, item_id: int) -> None:
         if kind == "currencies" and conn.execute(
                 "SELECT 1 FROM fx_rates WHERE currency_id = ? LIMIT 1", (item_id,)).fetchone():
             raise ValueError(f"「{r['name']}」填了月汇率，不能删除（先清空它的汇率）")
+        if ref and conn.execute(f"SELECT 1 FROM positions WHERE {ref} = ? LIMIT 1", (item_id,)).fetchone():
+            raise ValueError(f"「{r['name']}」在持仓里用到了，不能删除")
+        if kind == "currencies":
+            conn.execute("UPDATE accounts SET value_currency_id = NULL WHERE value_currency_id = ?", (item_id,))
         if kind == "accounts":
             conn.execute("DELETE FROM account_currencies WHERE account_id = ?", (item_id,))
         if kind == "currencies":

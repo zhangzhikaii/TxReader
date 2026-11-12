@@ -71,7 +71,16 @@ function renderBalanceRows() {
   const quiet = a => !a.count && Object.values(a.balances).every(v => !v);
   const shown = $("bal-hide-quiet").checked ? bal.accounts.filter(a => !quiet(a)) : bal.accounts;
   const hidden = bal.accounts.length - shown.length;
-  const row = a => `<tr${grouped() ? ' class="in-group"' : ""}><td>${esc(a.name)}${a.count ? `<span class="count">${a.count} 笔</span>` : ""}</td>${cur.map(c => moneyCell(a.balances[c])).join("")}</tr>`;
+  // Investment accounts: the latest 持仓 valuation by the month's end, under the name
+  const valued = a => {
+    const v = bal.valuations?.[a.name];
+    if (!v) return "";
+    const pct = (label, r) => r == null ? "" : ` · ${label} <span class="${amtClass(r)}">${(r > 0 ? "+" : "") + (r * 100).toFixed(2)}%</span>`;
+    const ratio = pct("较结余", v.ratio) + pct("持仓", v.position_ratio);
+    return `<a class="valued" href="#holdings" title="${v.week} 那周的持仓">市值 ${v.market_value == null ? "缺汇率" : fmtAmount(v.market_value)} ${esc(v.currency)}${ratio}` +
+           `<span class="muted">（${+v.week.slice(5, 7)}/${+v.week.slice(8)} 那周）</span></a>`;
+  };
+  const row = a => `<tr${grouped() ? ' class="in-group"' : ""}><td>${esc(a.name)}${a.count ? `<span class="count">${a.count} 笔</span>` : ""}${valued(a)}</td>${cur.map(c => moneyCell(a.balances[c])).join("")}</tr>`;
   let html;
   if (grouped()) {
     html = bal.groups.map(g => {

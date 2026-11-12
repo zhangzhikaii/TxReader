@@ -192,6 +192,20 @@ def _holdings(conn, start: str, month: str) -> dict[tuple[str, str], float]:
     return {k: round(v, 2) for k, v in out.items()}
 
 
+def _holdings_on(conn, start: str, day: str) -> dict[tuple[str, str], float] | None:
+    """Like `_holdings`, at the end of a day (2026/11/15) instead of a month. None when the day
+    isn't after the start month: only the start month's end is known before that."""
+    if day[:7].replace("/", "-") <= start:
+        return None
+    out = _holdings(conn, start, start)  # the opening balances
+    for r in conn.execute(
+            "SELECT account, currency, SUM(amount) FROM transactions"
+            " WHERE substr(date, 1, 7) > ? AND substr(date, 1, 10) <= ? GROUP BY account, currency",
+            (start.replace("-", "/"), day)):
+        out[(r[0], r[1])] = round(out.get((r[0], r[1]), 0) + r[2], 2)
+    return out
+
+
 def _by_currency(holdings: dict[tuple[str, str], float]) -> dict[str, float]:
     out: dict[str, float] = {}
     for (_, c), v in holdings.items():

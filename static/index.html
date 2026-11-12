@@ -16,6 +16,7 @@
       <a href="#transactions" data-view="transactions">交易</a>
       <a href="#monthly" data-view="monthly">收支</a>
       <a href="#balances" data-view="balances">结余</a>
+      <a href="#holdings" data-view="holdings">持仓</a>
       <a href="#settings" data-view="settings">设置</a>
       <a href="#security" data-view="security">登录记录</a>
     </nav>
@@ -271,6 +272,38 @@
     </div>
   </section>
 
+  <!-- ===== 持仓 ===== -->
+  <section id="view-holdings" hidden>
+    <div class="card month-bar">
+      <select id="hd-account" aria-label="账户"></select>
+      <button class="secondary" id="hd-prev" title="上一周">‹</button>
+      <span id="hd-week" class="week-label"></span>
+      <button class="secondary" id="hd-next" title="下一周">›</button>
+      <button class="secondary" id="hd-today">本周</button>
+      <span id="hd-status" class="status"></span>
+    </div>
+    <div id="hd-warn"></div>
+    <div id="hd-tiles"></div>
+    <div class="card" id="hd-card" hidden>
+      <div id="hd-lock" class="lockbar"></div>
+      <h2 id="hd-title"></h2>
+      <p class="settings-help" id="hd-currency"></p>
+      <div class="table-wrap"><table class="sheet">
+        <thead id="hd-head"></thead>
+        <tbody id="hd-rows"></tbody>
+      </table></div>
+      <div class="add-row" id="hd-add" hidden><button class="secondary" data-hd-add="security">＋ 证券</button><button class="secondary" data-hd-add="cash">＋ 现金</button></div>
+      <div class="legend">每周填一次。证券的金额 = 数量 × 现价；成本价是每单位的平均成本（可不填），持仓盈亏 = 金额 − 数量 × 成本价；现金可以是任何币种。折算用这周周日所在月份的月汇率。成本 = 结余页这个账户在这周周日的余额（期初余额 + 之后的交易），较结余盈亏 = 市值 − 成本，它包括现金、已经卖掉的盈亏和汇差，持仓盈亏只算现在拿着、填了成本价的证券。只是看看，不会记成交易</div>
+    </div>
+    <div class="card" id="hd-history-card" hidden>
+      <h2>每周记录<span id="hd-history-cur" class="muted"></span></h2>
+      <div class="table-wrap"><table class="sheet">
+        <thead><tr><th>周</th><th class="num">市值</th><th class="num">成本（结余）</th><th class="num">较结余盈亏</th><th class="num">比例</th><th class="num">持仓盈亏</th><th class="num">比例</th></tr></thead>
+        <tbody id="hd-history"></tbody>
+      </table></div>
+    </div>
+  </section>
+
   <!-- ===== 设置 ===== -->
   <section id="view-settings" hidden>
    <div class="tabs" role="tablist" id="set-tabs">
@@ -411,6 +444,7 @@
 <script src="/static/js/monthly.js"></script>
 <script src="/static/js/trend.js"></script>
 <script src="/static/js/balances.js"></script>
+<script src="/static/js/holdings.js"></script>
 <script src="/static/js/settings.js"></script>
 <script src="/static/js/opening.js"></script>
 <script src="/static/js/rates.js"></script>

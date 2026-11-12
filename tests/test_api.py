@@ -654,3 +654,90 @@ def test_fixed_categories(client):
     with connect() as conn:
         marked = {r[0]: r[1] for r in conn.execute("SELECT name, fixed FROM categories")}
     assert marked == {"房租": 1, "家电": 0}
+
+
+def test_holdings(client):
+    from datetime import date
+    from txreader import portfolio
+    assert client.get("/api/holdings").json()["accounts"] == []  # no investment account yet
+
+    client.post("/api/transactions", json={"add_accounts": True, "rows": [
+        {"date": "2026/10/05 10:00:00", "account": "证券", "currency": "日元", "amount": 50000,
+         "category": "内部转账", "description": ""},
+        {"date": "2026/10/20 10:00:00", "account": "证券", "currency": "日元", "amount": 10000,
+         "category": "内部转账", "description": ""}]})  # after the week below
+    ids = {a["name"]: a["id"] for a in client.get("/api/settings").json()["accounts"]}
+    acc = ids["证券"]
+    client.post("/api/settings/batch", json={"ops": [
+        {"op": "add", "kind": "currencies", "name": "美元"}, {"op": "add", "kind": "currencies", "name": "人民币"},
+        {"op": "add_currency", "id": acc, "name": "美元"}]})
+    assert client.get(f"/api/holdings?account_id={acc}").status_code == 404  # not an investment account
+    client.post("/api/settings/batch", json={"ops": [{"op": "set_type", "kind": "accounts", "id": acc, "type": "invest"}]})
+    client.put("/api/opening", json={"start_month": "2026-09", "balances": [
+        {"account_id": acc, "currency": "日元", "amount": 100000}]})
+    client.put("/api/rates", json={"rates": [{"month": "2026-10", "currency": "日元", "rate": 0.05},
+                                             {"month": "2026-10", "currency": "美元", "rate": 7}]})
+
+    page = client.get("/api/holdings").json()
+    assert page["accounts"] == [{"id": acc, "name": "证券", "currency": "日元", "currencies": ["日元", "美元"]}]
+    assert page["account"] == acc and page["rows"] == [] and page["history"] == []
+
+    week = "2026-10-12"  # Monday; the week ends on 10/18
+    rows = [{"kind": "security", "name": "某某基金", "code": "0001", "currency": "日元", "quantity": 100, "price": 1200},
+            {"kind": "cash", "currency": "日元", "amount": 20000},
+            {"kind": "cash", "currency": "美元", "amount": 100}]
+    assert client.put("/api/holdings", json={"account_id": acc, "week": "2026-10-05", "rows": [
+        dict(rows[0], unit_cost=-1)]}).status_code == 400
+    assert client.put("/api/holdings", json={"account_id": acc, "week": "2026-10-13", "rows": rows}).status_code == 400
+    assert client.put("/api/holdings", json={"account_id": acc, "week": "2099-01-05", "rows": rows}).status_code == 400
+    bad = [{"kind": "security", "name": "x", "currency": "日元", "quantity": "abc", "price": 1}]
+    assert client.put("/api/holdings", json={"account_id": acc, "week": week, "rows": rows + bad}).status_code == 400
+    assert client.put("/api/holdings", json={"account_id": acc, "week": week, "rows": rows}).is_success
+
+    page = portfolio.holdings(acc, week, today=date(2026, 11, 12))
+    assert page["filled"] and [r["kind"] for r in page["rows"]] == ["security", "cash", "cash"]
+    v = page["valuation"]
+    # 120,000 + 20,000 + 100 USD (x 7 / 0.05 = 14,000 yen); cost = 100,000 + 50,000
+    assert [r["converted"] for r in v["rows"]] == [120000, 20000, 14000]
+    assert (v["market_value"], v["cost"], v["gain"], v["ratio"]) == (154000, 150000, 4000, round(4000 / 150000, 6))
+    assert page["history"] == [{"week": week, "market_value": 154000, "cost": 150000, "gain": 4000,
+                                "ratio": round(4000 / 150000, 6), "position_gain": None, "position_ratio": None}]
+    assert (v["position_cost"], v["uncosted"]) == (None, 1)  # no unit cost typed in
+
+    # With unit costs: the position gain covers only the securities that have one
+    costed = [dict(rows[0], unit_cost=1000), *rows[1:],
+              {"kind": "security", "name": "某某股票", "currency": "美元", "quantity": 2, "price": 60, "unit_cost": 50},
+              {"kind": "security", "name": "某某债券", "currency": "日元", "quantity": 1, "price": 500}]
+    client.put("/api/holdings", json={"account_id": acc, "week": week, "rows": costed})
+    v = portfolio.holdings(acc, week, today=date(2026, 11, 12))["valuation"]
+    # 某某基金 120,000 vs 100,000; 某某股票 120 USD = 16,800 yen vs 100 USD = 14,000 yen
+    assert [(r["cost_converted"], r["gain"]) for r in v["rows"]] == [
+        (100000, 20000), (None, None), (None, None), (14000, 2800), (None, None)]
+    assert v["rows"][0]["ratio"] == 0.2 and v["uncosted"] == 1
+    assert (v["position_cost"], v["position_gain"], v["position_ratio"]) == (114000, 22800, 0.2)
+    assert v["market_value"] == 154000 + 16800 + 500
+    client.put("/api/holdings", json={"account_id": acc, "week": week, "rows": rows})
+
+    # A later week starts from the latest snapshot before it
+    later = portfolio.holdings(acc, "2026-10-26", today=date(2026, 11, 12))
+    assert not later["filled"] and later["copy_from"]["week"] == week and len(later["copy_from"]["rows"]) == 3
+    assert later["valuation"]["market_value"] is None and later["valuation"]["cost"] == 160000
+
+    # The balance sheet shows the latest valuation by the month's end
+    bal = client.get("/api/balances?month=2026-10").json()
+    assert bal["valuations"]["证券"] == {"week": week, "currency": "日元", "market_value": 154000,
+                                        "ratio": round(4000 / 150000, 6), "position_ratio": None}
+    assert client.get("/api/balances?month=2026-09").json()["valuations"] == {}
+
+    # Valued in another currency: everything converted; a missing rate leaves it open
+    client.put("/api/holdings", json={"account_id": acc, "week": week, "currency": "人民币", "rows": rows})
+    v = portfolio.holdings(acc, week, today=date(2026, 11, 12))["valuation"]
+    assert (v["currency"], v["market_value"], v["cost"]) == ("人民币", 7700, 7500)
+    early = portfolio.holdings(acc, "2026-09-21", today=date(2026, 11, 12))["valuation"]
+    assert early["cost"] is None and early["notes"]  # in the start month: no balance yet
+
+    # In use: the account and its currencies can't be deleted
+    assert client.post("/api/settings/batch", json={"ops": [{"op": "delete", "kind": "accounts", "id": acc}]}).status_code == 400
+    # No rows: the snapshot is gone
+    client.put("/api/holdings", json={"account_id": acc, "week": week, "rows": []})
+    assert portfolio.holdings(acc, week, today=date(2026, 11, 12))["history"] == []

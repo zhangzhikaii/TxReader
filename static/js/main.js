@@ -1,6 +1,6 @@
 // Loaded last: page switching by #hash, logout, and start-up.
 
-const VIEWS = ["add", "transactions", "monthly", "balances", "settings", "security"];
+const VIEWS = ["add", "transactions", "monthly", "balances", "holdings", "settings", "security"];
 function route() {
   let view = location.hash.slice(1);
   // Leaving settings with unsaved edits: asked first; staying puts the address back
@@ -10,6 +10,10 @@ function route() {
   }
   if (!$("view-transactions").hidden && view !== "transactions" && !leaveTxEdit()) { // same for transactions
     history.replaceState(null, "", "#transactions");
+    return;
+  }
+  if (!$("view-holdings").hidden && view !== "holdings" && !leaveHdEdit()) { // and for 持仓
+    history.replaceState(null, "", "#holdings");
     return;
   }
   if (view === "recognize") { view = "add"; showMethod("screenshot"); } // old bookmark
@@ -27,6 +31,7 @@ function route() {
   if (view === "transactions") loadSuggestions().then(fillTxFilters).then(loadTransactions); // lists may have changed in settings
   if (view === "settings") { loadSettings(); loadRates(); loadEmailSettings(); }
   if (view === "balances") loadBalances($("bal-month").value || null);
+  if (view === "holdings") loadHoldings();
   if (view === "monthly") loadMonthlyPage();
   if (view === "security") loadSecurity();
 }

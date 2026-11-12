@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     name       TEXT NOT NULL UNIQUE,
     sort       INTEGER NOT NULL DEFAULT 0,
     type       TEXT NOT NULL DEFAULT '',   -- lists.ACCOUNT_TYPES key; '' until one is chosen
+    value_currency_id INTEGER REFERENCES currencies(id),  -- investment accounts: what 持仓 values them in
     created_at TEXT NOT NULL
 );
 
@@ -149,6 +150,23 @@ CREATE TABLE IF NOT EXISTS fx_rates (
     currency_id INTEGER NOT NULL REFERENCES currencies(id),
     rate        REAL NOT NULL CHECK (rate > 0),
     PRIMARY KEY (month, currency_id)
+);
+
+-- What an investment account held, one snapshot a week (持仓; see txreader/portfolio.py).
+-- week = that week's Monday (2026-11-09). A security is quantity x price; cash is an amount.
+CREATE TABLE IF NOT EXISTS positions (
+    account_id  INTEGER NOT NULL REFERENCES accounts(id),
+    week        TEXT NOT NULL,
+    pos         INTEGER NOT NULL,       -- order in the table
+    kind        TEXT NOT NULL CHECK (kind IN ('security', 'cash')),
+    name        TEXT NOT NULL DEFAULT '',
+    code        TEXT NOT NULL DEFAULT '',
+    currency_id INTEGER NOT NULL REFERENCES currencies(id),
+    quantity    REAL,                   -- security only
+    price       REAL,                   -- security only, per unit, in its currency
+    unit_cost   REAL,                   -- security only, optional: what one unit cost on average
+    amount      REAL,                   -- cash only
+    PRIMARY KEY (account_id, week, pos)
 );
 
 CREATE TABLE IF NOT EXISTS login_events (
@@ -244,6 +262,11 @@ def _migrate(conn) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(accounts)")}
     if "type" not in cols:
         conn.execute("ALTER TABLE accounts ADD COLUMN type TEXT NOT NULL DEFAULT ''")
+    if "value_currency_id" not in cols:  # and then the currency 持仓 values an investment account in
+        conn.execute("ALTER TABLE accounts ADD COLUMN value_currency_id INTEGER REFERENCES currencies(id)")
+    # Securities in 持仓 gained what they cost (per unit)
+    if "unit_cost" not in {r["name"] for r in conn.execute("PRAGMA table_info(positions)")}:
+        conn.execute("ALTER TABLE positions ADD COLUMN unit_cost REAL")
 
     # The lists started out empty: fill them once from the transactions so far
     if not conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():

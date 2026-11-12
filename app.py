@@ -14,12 +14,12 @@ from fastapi.staticfiles import StaticFiles
 load_dotenv(Path(__file__).parent / ".env")
 
 from txreader import auth, errors, lists, mail  # noqa: E402
-from txreader.routes import books, email, pages, review, settings, transactions  # noqa: E402
+from txreader.routes import books, email, holdings, pages, review, settings, transactions  # noqa: E402
 
 app = FastAPI(title="TxReader")
 PUBLIC_PATHS = {"/login", "/api/login"}
 
-for module in (pages, review, transactions, books, settings, email):
+for module in (pages, review, transactions, books, holdings, settings, email):
     app.include_router(module.router)
 
 

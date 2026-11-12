@@ -2,7 +2,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from .. import books
+from .. import books, portfolio
 
 router = APIRouter()
 
@@ -85,8 +85,11 @@ def set_rate(month: str, currency: str, body: RateBody):
 
 @router.get("/api/balances")
 def balance_sheet(month: str | None = None):
-    """Month-end balances of every account and currency, converted to the base currency."""
-    return books.balances(month)
+    """Month-end balances of every account and currency, converted to the base currency; with
+    the investment accounts' latest 持仓 valuation by then (account name -> see portfolio.at_month_end)."""
+    out = books.balances(month)
+    out["valuations"] = portfolio.at_month_end(out["month"]) if out["month"] else {}
+    return out
 
 
 @router.get("/api/monthly")

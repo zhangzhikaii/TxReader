@@ -8,13 +8,14 @@
 
 ```
 app.py                    FastAPI 入口：登录检查（中间件）、异常 -> 响应（ValueError 400、NotFound 404、UnknownNames 409 等，接口里不用自己 try/except）、挂载路由和 /static
-txreader/routes/          接口，按功能一个 APIRouter：pages（页面、登录）、review（截图识别、待核对）、transactions（交易、按筛选条件导出 CSV）、books（期初余额、汇率、两张报表）、settings（清单）、email
+txreader/routes/          接口，按功能一个 APIRouter：pages（页面、登录）、review（截图识别、待核对）、transactions（交易、按筛选条件导出 CSV）、books（期初余额、汇率、两张报表）、holdings（持仓）、settings（清单）、email
 txreader/errors.py        公共的 NotFound（各模块可改 `detail` 提示文字）
 txreader/db.py            SQLite 表结构、旧库升级（`_migrate`）、账户 / 币种登记（`register_accounts`）、连接（`connect`；`transaction()` 里的多次 `connect()` 共用一个连接，全部成功才提交）、截图存成 WebP（数据目录 TXREADER_DATA，默认 data/）
 txreader/store.py         识别入库流程、待核对行、确认入库、手动输入、交易、导出 CSV（`export_csv`，不记录导出）
 txreader/lists.py         账户 / 币种 / 种类清单：输入时的提示（`offered`）、找出新名称（`unknown`）、设置页的增删改排序（`apply`：一批改动一起保存）
 txreader/devtools.py      开发用命令：`python -m txreader.devtools clear`（删除所有交易，要输入 yes）、`seed <file>`（从 seed/ 导入 CSV 并登记清单）
 txreader/books.py         期初余额（起始月 + 账户 × 币种）、月汇率（1 外币 = 多少本位币，手填）、账户结余（`balances`：月底结余、折算、汇差、月度差额、按账户类型的小计 `groups`）；月度收支（`monthly`：种类 × 币种、折算、汇差、和结余页核对；`year=` 时把一年各月加起来）；每月对比（`trend`：各种类最近几个月逐月的数字，页面上选要比的种类）
+txreader/portfolio.py     持仓：投资账户（类型「投资」）每周一份的持仓快照（`positions`，周一的日期为名；证券 = 数量 × 现价，现金可为任何币种），按账户自己的币种（`accounts.value_currency_id`）用月汇率折算出市值；成本 = 那周周日的结余（`books._holdings_on`），算出盈亏和比例；证券可填成本价（`unit_cost`，每单位），另算持仓盈亏（只算填了成本价的证券）；结余页显示月底前最近一次的市值（`at_month_end`）。只是看看，不记成交易
 txreader/matching.py      新识别的行与库里已有行比对（跳过 / 合并 / 疑似重复 / 新增）
 txreader/mail.py          邮件导入：Outlook OAuth（Client ID / secret / 令牌存在 config 表）、邮件规则（`email_rules`：发件人、标题、三个正则）、读取上次之后的邮件（`fetch`）、识别、重新识别没认出来的
 txreader/auth.py          单用户密码登录、会话（闲置超时 + 30 天上限）、登录记录、错误次数锁定；`python -m txreader.auth` 生成密码哈希（填到 `.env`）
@@ -28,7 +29,7 @@ txreader/parsers/         每个来源一个解析器，parse_boxes(boxes, img) 
   receipt.py              纸质小票照片（各家版式不同）；按文本框倾斜角配对「合計」与金额
 txreader/models.py        Tx（解析结果）与 resolve_date（补全缺失的年 / 月，并标记为推测）
 txreader/records.py       build_records：合并多张截图、跨截图去重、按时间排序，生成行
-static/index.html         页面结构（记一笔 / 交易 / 收支 / 结余 / 设置 / 登录记录六个页面；收支里再分本月 / 每月对比；设置里再分账户 / 币种 / 种类 / 期初余额 / 月汇率 / 邮件，按 #hash 切换；记一笔里再分截图识别 / 手动输入 / 邮件导入）
+static/index.html         页面结构（记一笔 / 交易 / 收支 / 结余 / 持仓 / 设置 / 登录记录七个页面；收支里再分本月 / 每月对比；设置里再分账户 / 币种 / 种类 / 期初余额 / 月汇率 / 邮件，按 #hash 切换；记一笔里再分截图识别 / 手动输入 / 邮件导入）
 static/app.css            全部样式
 static/js/                前端脚本，原生 JS、无构建步骤；普通 <script>（不是模块）按 index.html 里的顺序加载，共用一个全局作用域
   common.js               $ / api / send / esc / 金额日期格式化 / moneyCell / tableKeys（表格里回车跳格）
@@ -38,6 +39,7 @@ static/js/                前端脚本，原生 JS、无构建步骤；普通 <s
   manual.js               手动输入、确认框；loadSuggestions（清单提示，别的页面也用）
   email-import.js         从邮件更新、没认出来的邮件
   transactions.js / monthly.js / balances.js / security.js   各自的页面（交易页：周期切换 + 高级筛选、「导出 CSV」导出当前筛选出的交易、和设置页一样上锁 / 统一保存（`txEdit`，`PATCH /api/transactions`）；收支页点种类跳到交易页（`txPreset`））
+  holdings.js             持仓页：选账户、按周切换（‹ › / 本周）、上锁 / 统一保存（`hdEdit`，`PUT /api/holdings` 整周替换）；没填的周从上一次的持仓开始填
   trend.js                收支页的标签切换（本月 / 每月对比）和每月对比表（默认显示设置里标为「固定」的种类，其余自己加）；点格子跳到交易页（`txPreset`）
   settings.js             设置页标签、上锁 / 统一保存（`lockable`）、账户 / 币种 / 种类清单（拖动排序）
   opening.js / rates.js / email-settings.js                              设置里的期初余额、月汇率、邮件

@@ -237,3 +237,17 @@ table.trend td.clickable:hover { color:var(--accent); text-decoration:underline;
 .pick-help { margin-left:auto; font-size:13px; color:var(--muted); }
 h2.with-action { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 h2.with-action button { font-size:13px; font-weight:normal; padding:4px 10px; }
+/* 持仓 */
+.week-label { font-variant-numeric:tabular-nums; min-width:150px; text-align:center; }
+#hd-rows input { width:100%; min-width:70px; }
+#hd-rows td.num input { text-align:right; min-width:90px; }
+#hd-history tr.current > td { background:#ecfdf5; }
+#hd-add[hidden] { display:none; }
+#hd-add button { margin-right:8px; }
+/* 结余: an investment account's market value under its name */
+table.sheet a.valued { display:block; font-size:12px; color:var(--text); text-decoration:none; margin-top:2px; }
+table.sheet a.valued:hover { text-decoration:underline; }
+.hero .split.gains { flex-direction:column; gap:6px; }
+.hero .gain-line { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 16px; }
+.hero .gain-line .name { font-weight:600; color:var(--text); min-width:72px; }
+#hd-rows td .pct { display:block; font-size:12px; }
