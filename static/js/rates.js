@@ -1,6 +1,7 @@
 // 「设置 › 月汇率」: one rate per month and foreign currency (locked until 「✎ 修改」, see settings.js).
 // Currencies with a code get their rates from Yahoo Finance (server side, txreader/fx.py): synced
 // once when the tab is shown (loadSettings resets fxSynced), 「⟳ 更新汇率」 refetches this month's.
+// Opening 结余 / 收支 syncs too (fxSyncFor).
 
 let fx = { base: null, base_code: "", currencies: [], codes: {}, months: [], rates: {}, sources: {}, this_month: "" };
 let fxEdit = null; // while editing: {"month|currency": typed text}
@@ -33,6 +34,13 @@ async function fxSync(url, busy) {
     try { fx = await api("/api/rates"); } catch {}
   }
   renderRates();
+}
+// 结余 / 收支 pages: fetch what is missing or stale when the page is opened (main.js), and show
+// the page again if anything came. Quietly: the pages already say which rates are missing.
+async function fxSyncFor(view, reload) {
+  let r;
+  try { r = await api("/api/rates/sync", send("POST", {})); } catch { return; }
+  if (r.updated && !$("view-" + view).hidden) reload();
 }
 $("fx-refresh").onclick = () => fxSync("/api/rates/refresh", "正在更新汇率…");
 

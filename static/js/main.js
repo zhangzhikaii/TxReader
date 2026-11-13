@@ -30,9 +30,16 @@ function route() {
   if (view === "add") { if (method !== "manual") loadPending(); if (method === "email") loadEmailState(); loadSuggestions(); }
   if (view === "transactions") loadSuggestions().then(fillTxFilters).then(loadTransactions); // lists may have changed in settings
   if (view === "settings") { loadSettings(); loadEmailSettings(); }
-  if (view === "balances") loadBalances($("bal-month").value || null);
+  if (view === "balances") {
+    loadBalances($("bal-month").value || null);
+    fxSyncFor("balances", () => loadBalances(bal?.month ?? null));
+  }
   if (view === "holdings") { hdSynced.clear(); const p = hdPreset; hdPreset = null; p ? loadHoldings(p.account, p.week) : loadHoldings(); }
-  if (view === "monthly") loadMonthlyPage();
+  if (view === "monthly") {
+    loadMonthlyPage();
+    // not loadMonthlyPage again: that would reset the comparison's categories
+    fxSyncFor("monthly", () => moTab === "trend" ? loadTrend(tr?.end ?? null) : loadMonthly(moKey()));
+  }
   if (view === "security") loadSecurity();
 }
 window.addEventListener("hashchange", route);

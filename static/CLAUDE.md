@@ -24,7 +24,7 @@ js/holdings.js      持仓页：按周切换、上锁 / 统一保存（hdEdit）
 js/security.js      登录记录
 js/settings.js      设置页标签、上锁 / 统一保存（lockable）、账户 / 币种 / 种类清单（拖动排序）
 js/opening.js       设置 › 期初余额
-js/rates.js         设置 › 月汇率：上锁 / 统一保存（fxEdit）、自动取汇率（fxAutoSync / fxSync）
+js/rates.js         设置 › 月汇率：上锁 / 统一保存（fxEdit）、自动取汇率（fxAutoSync / fxSync；结余、收支页打开时用 fxSyncFor）
 js/email-settings.js 设置 › 邮件
 js/main.js          最后加载：按 #hash 切换页面（route）、启动
 ```

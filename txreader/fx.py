@@ -8,7 +8,7 @@
   trading day ("close"), fetched once and then final. A rate typed in ("manual") is never
   overwritten; clearing it lets the next sync fetch it.
 - Months are the rate table's (books._all_months), up to this month. Nothing runs in the
-  background: `sync` is called when the rates page is opened, `refresh` by 「更新汇率」.
+  background: `sync` is called when the rates tab, 结余 or 收支 is opened, `refresh` by 「更新汇率」.
 """
 from datetime import date, datetime, timedelta, timezone
 
