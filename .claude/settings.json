@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(/data/**)",
+      "Read(/samples/**)",
+      "Read(/seed/**)",
+      "Read(/docs/example*.csv)",
+      "Read(**/txreader.db)",
+      "Edit(/data/**)",
+      "Edit(/samples/**)",
+      "Edit(/seed/**)",
+      "Bash(sqlite3 *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-private.sh",
+            "onFailure": "block",
+            "statusMessage": "检查是否碰到真实数据"
+          }
+        ]
+      }
+    ]
+  }
+}
