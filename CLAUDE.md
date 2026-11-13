@@ -26,13 +26,14 @@ txreader/parsers/         每个来源一个解析器，parse_boxes(boxes, img) 
   boc.py                  中国银行单笔「明细」页（每张一笔）
   icbc.py                 工商银行「收支明细」列表；看不到月份标题时按星期推断月份
   suica.py                Apple 钱包 Suica 单笔详情页
+  saison.py               セゾン卡 App「明細」列表；日期是利用日，没有年份和时间
   receipt.py              纸质小票照片（各家版式不同）；按文本框倾斜角配对「合計」与金额
 txreader/models.py        Tx（解析结果）与 resolve_date（补全缺失的年 / 月，并标记为推测）
 txreader/records.py       build_records：合并多张截图、跨截图去重、按时间排序，生成行
 static/index.html         页面结构（记一笔 / 交易 / 收支 / 结余 / 持仓 / 设置 / 登录记录七个页面；收支里再分本月 / 每月对比；设置里再分账户 / 币种 / 种类 / 期初余额 / 月汇率 / 邮件，按 #hash 切换；记一笔里再分截图识别 / 手动输入 / 邮件导入）
 static/app.css            全部样式
 static/js/                前端脚本，原生 JS、无构建步骤；普通 <script>（不是模块）按 index.html 里的顺序加载，共用一个全局作用域
-  common.js               $ / api / send / esc / 金额日期格式化 / moneyCell / tableKeys（表格里回车跳格）
+  common.js               $ / api / send / esc / 金额日期格式化 / moneyCell / tableKeys（表格里回车 / 方向键跳格）
   viewer.js               右侧大图 / 邮件正文、缩略图
   add.js                  记一笔的三种方式切换
   recognize.js            SOURCES、截图上传、待核对表（邮件导入共用）
@@ -72,7 +73,7 @@ tests/test_samples.py     用 samples/ 里的真实截图对照期望结果（�
 ## 前端要点（static/）
 
 - 脚本共用一个全局作用域：新文件里的顶层变量名不能和别的文件重复；文件加载时直接执行的代码只能用前面文件定义的东西（函数里的调用不受限制，`main.js` 最后才启动页面）。新加文件要写进 `index.html` 的 `<script>` 列表。
-- 表格里的输入框要「回车跳到下一行同一列」，用 `tableKeys(tbody, column, atEnd)`，不要再自己写 keydown。
+- 表格里的输入框要「回车跳到下一行同一列」、方向键上下左右移动，用 `tableKeys(tbody, column, atEnd)`，不要再自己写 keydown。
 - `/static` 的文件响应头带 `Cache-Control: no-cache`，改完刷新页面就能拿到新版本。
 
 - 「记一笔」的添加方式由 `showMethod` / `setMethod` 切换（后者还会加载数据），存在 localStorage 的 `tx.method`。手动输入的行在 `mRows`，未入库的暂存在 `tx.manual.draft`。

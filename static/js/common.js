@@ -60,19 +60,50 @@ function moneyCell(v, missing = "缺汇率") {
 
 // Spreadsheet-like keys in a table of inputs: Enter moves to the same column in the next row
 // (Shift+Enter: the previous one), and a cell's text is selected when focus moves into it.
+// Arrow keys move too: ↑↓ to the same column in the previous / next row, ←→ to the previous /
+// next cell in the row, but only when the caret is already at that end of the text (or the
+// whole text is selected, as right after moving in), so arrows still move within the text.
+// Not handled: date/time pickers (arrows edit their fields), and ↑↓ in an input with
+// suggestions (list=) after typing in it, where they pick a suggestion.
 // column(el): a selector matching the inputs of el's column, or null when el isn't a cell.
 // atEnd(el, e): no row further that way; by default leave the cell, which saves it.
 function tableKeys(tbody, column, atEnd = el => el.blur()) {
+  const typed = new WeakSet(); // inputs edited since focus moved into them
+  const cellsOf = row => [...row.querySelectorAll("input")]
+    .filter(c => column(c) && !c.disabled && c.type !== "hidden");
+  tbody.addEventListener("input", e => typed.add(e.target));
   tbody.addEventListener("keydown", e => {
-    if (e.key !== "Enter" || e.isComposing) return; // isComposing: Enter confirming IME input
-    const sel = column(e.target);
+    if (e.isComposing) return; // e.g. Enter confirming IME input
+    const el = e.target, sel = column(el);
     if (!sel) return;
+    const step = (list, d) => list[list.indexOf(el) + d];
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const next = step([...tbody.querySelectorAll(sel)], e.shiftKey ? -1 : 1);
+      if (next) next.focus(); else atEnd(el, e);
+      return;
+    }
+    if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (/^(date|time|datetime-local|month|week)$/.test(el.type)) return;
+    let next;
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      if (el.list && typed.has(el)) return;
+      next = step([...tbody.querySelectorAll(sel)], e.key === "ArrowUp" ? -1 : 1);
+    } else {
+      const left = e.key === "ArrowLeft";
+      const len = (el.value ?? "").length, a = el.selectionStart, b = el.selectionEnd;
+      const all = a === 0 && b === len;
+      if (a != null && !all && (left ? b !== 0 : a !== len)) return; // caret not at that end
+      const row = el.closest("tr");
+      if (row) next = step(cellsOf(row), left ? -1 : 1);
+    }
+    if (!next) return;
     e.preventDefault();
-    const cells = [...tbody.querySelectorAll(sel)];
-    const next = cells[cells.indexOf(e.target) + (e.shiftKey ? -1 : 1)];
-    if (next) next.focus(); else atEnd(e.target, e);
+    next.focus();
   });
   tbody.addEventListener("focusin", e => {
+    typed.delete(e.target);
     if (column(e.target) && e.target.type !== "datetime-local") e.target.select();
   });
 }
