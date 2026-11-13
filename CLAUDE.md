@@ -2,7 +2,7 @@
 
 用户自己用的记账网页：上传手机 App 的交易截图（本地 RapidOCR 识别）、从 Outlook 读通知邮件，或手动输入，核对后入库；有月度收支、账户结余与汇差、投资持仓，能导出 CSV。用户用中文交流。
 
-联网的只有两处：邮件导入（Microsoft Graph，点「从邮件更新」时才读）和持仓页的证券价格（Yahoo Finance，只发代码，不发数量、金额）。不要加别的联网功能，除非用户同意。
+联网的只有两处：邮件导入（Microsoft Graph，点「从邮件更新」时才读）和 Yahoo Finance（持仓页的证券价格、设置页的月汇率，只发代码如 `7203.T`、`JPYCNY=X`，不发数量、金额）。不要加别的联网功能，除非用户同意。
 
 ## 先读哪里
 
@@ -27,6 +27,7 @@ txreader/lists.py         账户 / 币种 / 种类清单：提示、新名称、
 txreader/books.py         期初余额、月汇率、账户结余（`balances`）、月度收支（`monthly`）、每月对比（`trend`）
 txreader/portfolio.py     投资账户每周的持仓、市值、盈亏；自动取价格（`sync` / `refresh` / `lookup`）
 txreader/quotes.py        Yahoo Finance 公开接口：搜索、最新价、收盘价
+txreader/fx.py            月汇率从 Yahoo Finance 自动取（`sync` / `refresh`）：过去的月份取月底收盘价，本月取最新价
 txreader/mail.py          邮件导入：Outlook OAuth、邮件规则、读取、识别
 txreader/auth.py          单用户密码登录、会话、登录记录、锁定；`python -m txreader.auth` 生成密码哈希
 txreader/devtools.py      开发用命令：`clear`、`seed <file>`（见 README）
@@ -44,14 +45,14 @@ tests/test_samples.py     samples/ 里的真实截图对照期望结果（没有
 tests/test_docs.py        检查每个文件都写进了 CLAUDE.md 的结构
 ```
 
-测试不联网：持仓价格的测试替换掉 `quotes.latest` / `quotes.closes` / `quotes.search`。
+测试不联网：持仓价格、月汇率的测试替换掉 `quotes.latest` / `quotes.closes` / `quotes.search`。
 
 ## 数据流
 
 - 截图：按哈希存成 WebP（传过的直接用上次结果）→ OCR Box → 来源解析器 → `Tx` → `build_records` → `match_rows` 与库里比对 → 新行存为 `ocr_rows`（pending）→ 核对时的修改存在 `draft` → 确认后写入 `transactions`（`origin = screenshot`）
 - 手动输入：直接写入 `transactions`（`origin = manual`，没有 `ocr_row_id`）
 - 邮件：读 `email_last_fetch` 之后的邮件 → 按规则挑出、存进 `emails`（按 message_id 去重，认不出来的也存）→ `ocr_rows`（`source = email`，有 `email_id` 没有 `image_id`，规则的账户 / 币种 / 种类放在 `draft`）→ 和截图一样核对入库（`origin = email`）
-- 清单：`accounts`、`currencies`、`account_currencies`、`categories`，各有 `sort`；账户有 `type`（`lists.ACCOUNT_TYPES`），币种有 `is_base`，种类有 `fixed`。截图入库自动登记；手动输入遇到新的要用户同意（接口参数 `add_accounts`，否则 409）。交易里存名称文字，改名时一起改
+- 清单：`accounts`、`currencies`、`account_currencies`、`categories`，各有 `sort`；账户有 `type`（`lists.ACCOUNT_TYPES`），币种有 `is_base` 和 `code`（ISO 4217，添加时按名称猜，可以改；自动取汇率、持仓认币种都用它），种类有 `fixed`。截图入库自动登记；手动输入遇到新的要用户同意（接口参数 `add_accounts`，否则 409）。交易里存名称文字，改名时一起改
 - 报表：结余、收支、汇差都从交易 + 期初余额 + 月汇率算出来，不存（规则见 `docs/decisions.md`）
 
 ## 约定

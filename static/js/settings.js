@@ -87,6 +87,7 @@ async function loadSettings() {
   try { lists = await api("/api/settings"); } catch (e) { return flash("set-status", "读取失败：" + e.message); }
   for (const kind of Object.keys(LIST_LABELS)) renderList(kind);
   loadOpening();
+  fxSynced = false; // codes may have changed: rates are fetched again when the tab is shown
   loadRates(); // the rate table has a column per currency, so it follows the currency list
 }
 function renderList(kind) {
@@ -112,7 +113,12 @@ function renderList(kind) {
                  `<option value="${t.key}" ${t.key === type ? "selected" : ""}>${esc(t.label)}</option>`).join("")}</select></td>`
                : `<td>${type ? `<span class="tag">${esc(typeLabel(type))}</span>` : `<span class="muted">${esc(typeLabel(""))}</span>`}</td>`) + extra;
     }
-    if (kind === "currencies") extra = `<td>${it.is_base ? '<span class="tag done">本位币</span>' : ""}</td>`;
+    if (kind === "currencies") {
+      const code = ed?.codes[it.id] ?? it.code;
+      extra = (live ? `<td><input data-act="code" class="code-input" value="${esc(code)}" maxlength="3" placeholder="—" aria-label="币种代码"></td>`
+                    : `<td>${it.code ? esc(it.code) : '<span class="muted">—</span>'}</td>`) +
+        `<td>${it.is_base ? '<span class="tag done">本位币</span>' : ""}</td>`;
+    }
     if (kind === "categories") {
       const fixed = ed?.fixed[it.id] ?? it.fixed;
       extra = `<td>${live ? `<label class="check-cell" title="每月对比默认显示"><input type="checkbox" data-act="fixed" ${fixed ? "checked" : ""}>固定</label>`
@@ -127,7 +133,7 @@ function renderList(kind) {
       <td>${name}</td>${extra}<td class="num">${it.used}</td><td>${del}</td></tr>`;
   });
   const added = (ed?.added ?? []).map((n, i) => `<tr class="added"><td></td><td>${esc(n)} <span class="tag">新增</span></td>` +
-    (kind === "accounts" ? `<td class="muted">保存后再设</td><td class="muted">保存后再加币种</td>` : kind === "categories" ? `<td class="muted">保存后再设</td>` : "<td></td>") +
+    (kind === "accounts" ? `<td class="muted">保存后再设</td><td class="muted">保存后再加币种</td>` : kind === "categories" ? `<td class="muted">保存后再设</td>` : `<td class="muted">保存后再设</td><td></td>`) +
     `<td class="num">0</td><td><button class="icon" data-act="unadd" data-i="${i}" title="不添加了">✕</button></td></tr>`);
   $("set-" + kind).innerHTML = [...rows, ...added].join("") || `<tr><td colspan="6" class="empty">还没有${LIST_LABELS[kind]}</td></tr>`;
   $(`set-${kind}-new`).closest(".add-row").hidden = !ed;
@@ -153,6 +159,15 @@ function listChanges(kind) {
     out.push({ text: `账户「${it.name}」类型从「${typeLabel(it.type)}」改为「${typeLabel(ed.types[it.id])}」`,
                op: { op: "set_type", kind, id: it.id, type: ed.types[it.id] } });
   }
+  if (kind === "currencies") for (const it of items) {
+    if (ed.deleted.has(it.id) || !(it.id in ed.codes)) continue;
+    const code = ed.codes[it.id].trim().toUpperCase();
+    if (code && !/^[A-Z]{3}$/.test(code)) throw new Error(`币种「${it.name}」的代码要是三个字母（比如 JPY）：「${code}」`);
+    if (code === it.code) continue;
+    out.push({ text: `币种「${it.name}」的代码${it.code ? `从 ${it.code} ` : ""}改为${code || "空（汇率手填）"}` +
+               (it.code ? `（自动取的${it.is_base ? "所有" : "这个币种的"}汇率会重新取）` : ""),
+               op: { op: "set_code", kind, id: it.id, code } });
+  }
   for (const name of ed.added) out.push({ text: `新增${label}「${name}」`, op: { op: "add", kind, name } });
   if (kind === "accounts") for (const it of items) {
     if (ed.deleted.has(it.id)) continue;
@@ -164,7 +179,7 @@ function listChanges(kind) {
 for (const kind of Object.keys(LIST_LABELS)) lockable(kind, {
   label: LIST_LABELS[kind],
   editing: () => !!listEdit[kind],
-  begin() { listEdit[kind] = { names: {}, deleted: new Set(), added: [], addCur: {}, rmCur: {}, fixed: {}, types: {} }; renderList(kind); },
+  begin() { listEdit[kind] = { names: {}, deleted: new Set(), added: [], addCur: {}, rmCur: {}, fixed: {}, types: {}, codes: {} }; renderList(kind); },
   end() { listEdit[kind] = null; renderList(kind); },
   changes: () => listChanges(kind).map(c => c.text),
   save: () => api("/api/settings/batch", send("POST", { ops: listChanges(kind).map(c => c.op) })),
@@ -208,8 +223,8 @@ $("view-settings").addEventListener("click", e => {
 });
 $("view-settings").addEventListener("input", e => {
   const tr = e.target.closest("tr[data-kind]");
-  if (e.target.dataset.act !== "name" || !tr || !listEdit[tr.dataset.kind]) return;
-  listEdit[tr.dataset.kind].names[tr.dataset.id] = e.target.value;
+  if (!["name", "code"].includes(e.target.dataset.act) || !tr || !listEdit[tr.dataset.kind]) return;
+  listEdit[tr.dataset.kind][e.target.dataset.act === "code" ? "codes" : "names"][tr.dataset.id] = e.target.value;
   lockMsg = "";
   renderLock();
 });
@@ -294,7 +309,7 @@ $("view-settings").addEventListener("keydown", e => {
   if (e.key !== "Enter" || e.isComposing) return;
   const kind = e.target.id?.match(/^set-(\w+)-new$/)?.[1];
   if (kind) stageAdd(kind);
-  else if (e.target.dataset.act === "name") e.target.blur();
+  else if (["name", "code"].includes(e.target.dataset.act)) e.target.blur();
 });
 
 // ---------- tabs: one at a time, remembered ----------
@@ -308,5 +323,6 @@ function showSetTab(tab) {
   for (const el of document.querySelectorAll("[data-set-panel]")) el.hidden = !el.dataset.setPanel.split(" ").includes(tab);
   for (const b of document.querySelectorAll("#set-tabs button")) b.classList.toggle("active", b.dataset.setTab === tab);
   renderLock();
+  if (tab === "rates") fxAutoSync();
 }
 $("set-tabs").addEventListener("click", e => { const b = e.target.closest("[data-set-tab]"); if (b) showSetTab(b.dataset.setTab); });

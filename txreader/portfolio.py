@@ -400,7 +400,7 @@ def lookup(code: str, week: str, today: date | None = None) -> list[dict]:
     """Candidates for a code, priced for the week (see quotes.lookup)."""
     week = _check_week(week).isoformat()
     with connect() as conn:
-        names = [r[0] for r in conn.execute("SELECT name FROM currencies ORDER BY sort, id")]
+        names = {r[0]: r[1] for r in conn.execute("SELECT code, name FROM currencies WHERE code != ''")}
     return quotes.lookup(code.strip(), week, monday(today or date.today()).isoformat(), names)
 
 

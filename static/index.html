@@ -338,9 +338,9 @@
     </div>
     <div class="card" data-set-panel="currencies">
       <h2>币种</h2>
-      <p class="settings-help">本位币固定为人民币，统计时都折算成它。账户结余、月度收支的列按这里的顺序</p>
+      <p class="settings-help">本位币固定为人民币，统计时都折算成它。账户结余、月度收支的列按这里的顺序。代码是 ISO 4217 的三个字母（日元 JPY、美元 USD），本位币和外币都有代码时，月汇率从 Yahoo Finance 自动取；空着就手填</p>
       <div class="table-wrap"><table>
-        <thead><tr><th></th><th>名称</th><th>本位币</th><th class="num">交易</th><th></th></tr></thead>
+        <thead><tr><th></th><th>名称</th><th>代码</th><th>本位币</th><th class="num">交易</th><th></th></tr></thead>
         <tbody id="set-currencies"></tbody>
       </table></div>
       <div class="add-row"><input id="set-currencies-new" placeholder="新币种名称"><button class="secondary" data-add="currencies">添加币种</button></div>
@@ -372,8 +372,8 @@
         <thead id="fx-head"></thead>
         <tbody id="fx-rows"></tbody>
       </table></div>
-      <div class="bar"><span id="fx-status" class="status"></span></div>
-      <div class="legend">黄色是还没填的；清空即删除这个月的汇率。汇差盈亏 = 上月底存量 ×（本月汇率 − 上月汇率）</div>
+      <div class="bar"><button class="secondary" id="fx-refresh" title="从 Yahoo Finance 取本月的最新汇率" hidden>⟳ 更新汇率</button><span id="fx-status" class="status"></span></div>
+      <div class="legend">黄色是还没有的。改过的汇率记为「手填」，不会被自动取的覆盖；清空后保存，有代码的币种会重新自动取。汇差盈亏 = 上月底存量 ×（本月汇率 − 上月汇率）</div>
     </div>
     <div class="card" data-set-panel="email">
       <h2>连接 Outlook</h2>

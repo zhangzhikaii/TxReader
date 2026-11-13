@@ -24,6 +24,7 @@ class ListOp(BaseModel):
     name: str | None = None
     fixed: bool | None = None
     type: str | None = None
+    code: str | None = None
 
 
 class ListOps(BaseModel):
@@ -46,6 +47,7 @@ class ListItemEdit(BaseModel):
     name: str | None = None
     fixed: bool | None = None
     type: str | None = None
+    code: str | None = None
 
 
 @router.patch("/{kind}/{item_id}")

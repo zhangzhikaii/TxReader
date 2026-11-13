@@ -7,6 +7,7 @@ Only a symbol or the code typed in goes out, never quantities or amounts, and on
 - `latest(symbol)`: the latest price (during a session: the current one) and its time
 - `closes(symbol, days)`: for each day, the close of the last trading day on or before it
 - `price_for(symbol, week, this_week)`: this week -> latest; an ended week -> the close on its Sunday
+- `fx_symbol(code, base)`: the symbol of an exchange rate (JPY, CNY -> JPYCNY=X; see fx.py)
 
 Prices quoted in a currency's minor unit (GBp, ZAc, ILA) are turned into the major one.
 """
@@ -25,33 +26,8 @@ TIMEOUT = httpx.Timeout(6, connect=5)
 TRIES = 3
 MINOR = {"GBp": ("GBP", 100), "GBX": ("GBP", 100), "ZAc": ("ZAR", 100), "ILA": ("ILS", 100)}
 
-# ISO code -> what the currency list may call it (the list is free text)
-CURRENCY_NAMES = {
-    "JPY": ["日元", "日币", "日円", "円", "JPY"],
-    "USD": ["美元", "美金", "USD"],
-    "CNY": ["人民币", "RMB", "CNY"],
-    "HKD": ["港币", "港元", "HKD"],
-    "EUR": ["欧元", "EUR"],
-    "GBP": ["英镑", "GBP"],
-    "AUD": ["澳元", "澳币", "AUD"],
-    "CAD": ["加元", "加币", "CAD"],
-    "SGD": ["新加坡元", "新币", "SGD"],
-    "KRW": ["韩元", "KRW"],
-    "TWD": ["新台币", "台币", "TWD"],
-    "CHF": ["瑞士法郎", "CHF"],
-}
-
-
 class QuoteError(Exception):
     """Yahoo Finance couldn't be reached or answered with an error."""
-
-
-def currency_name(iso: str | None, names: list[str]) -> str | None:
-    """The name in the currency list for an ISO code, if it has one."""
-    for n in CURRENCY_NAMES.get(iso or "", []) + [iso or ""]:
-        if n and n in names:
-            return n
-    return None
 
 
 def _get(path: str, params: dict, tries: int = TRIES, timeout=TIMEOUT) -> dict | None:
@@ -104,21 +80,37 @@ def search(code: str) -> list[dict]:
             for x in _search(code)]
 
 
-def latest(symbol: str) -> dict | None:
+def fx_symbol(code: str, base: str) -> str:
+    """1 `code` in `base`."""
+    return f"{code}{base}=X"
+
+
+def _round(price: float, digits: int | None) -> float:
+    """Securities: 4 decimals; rates (digits None): 6 significant digits (1 KRW is 0.005 CNY)."""
+    return round(price, digits) if digits is not None else float(f"{price:.6g}")
+
+
+def latest(symbol: str, digits: int | None = 4) -> dict | None:
     """{"symbol", "name", "currency", "price", "at" (UTC, ISO)} or None (unknown / no price)."""
-    res = _chart(symbol, range="1d", interval="1d")
+    # Rates: regularMarketPrice is rounded to 4 decimals (KRWCNY 0.005), so the last 5-minute close is used
+    res = _chart(symbol, range="1d", interval="1d" if digits is not None else "5m")
     meta = (res or {}).get("meta") or {}
-    price = meta.get("regularMarketPrice")
+    price, at = meta.get("regularMarketPrice"), meta.get("regularMarketTime")
+    if digits is None:
+        bars = [(t, c) for t, c in zip((res or {}).get("timestamp") or [],
+                                       (((res or {}).get("indicators") or {}).get("quote") or [{}])[0].get("close") or [])
+                if c is not None]
+        if bars:
+            at, price = bars[-1]
     if price is None:
         return None
     currency, price = _major(meta.get("currency"), price)
-    at = meta.get("regularMarketTime")
     return {"symbol": meta.get("symbol") or symbol, "name": meta.get("longName") or meta.get("shortName") or symbol,
-            "currency": currency, "price": round(price, 4),
+            "currency": currency, "price": _round(price, digits),
             "at": datetime.fromtimestamp(at, timezone.utc).isoformat(timespec="minutes") if at else None}
 
 
-def closes(symbol: str, days: list[date]) -> dict:
+def closes(symbol: str, days: list[date], digits: int | None = 4) -> dict:
     """{"currency", "closes": {day: (price, trading day "2026-11-14")}}; a day before any data is left out.
     One call for all the days."""
     res = _chart(symbol, period1=_epoch(min(days) - timedelta(days=14)), period2=_epoch(max(days) + timedelta(days=2)),
@@ -136,7 +128,7 @@ def closes(symbol: str, days: list[date]) -> dict:
         before = [s for s in series if s[0] <= d]
         if before:
             day, c = before[-1]
-            out[d] = (round(_major(raw, c)[1], 4), day.isoformat())
+            out[d] = (_round(_major(raw, c)[1], digits), day.isoformat())
     return {"currency": _major(raw, 0)[0], "closes": out}
 
 
@@ -171,9 +163,9 @@ def guesses(code: str) -> list[str]:
     return out
 
 
-def lookup(code: str, week: str, this_week: str, names: list[str], limit: int = 5) -> list[dict]:
+def lookup(code: str, week: str, this_week: str, names: dict[str, str], limit: int = 5) -> list[dict]:
     """Candidates for a code with their price for the week: [{"symbol", "name", "exchange", "type",
-    "currency" (ISO), "currency_name" (in the list, or None), "price", "source", "at"}]; the ones
+    "currency" (ISO), "currency_name" (`names`: ISO code -> name in the list; or None), "price", "source", "at"}]; the ones
     without a price are left out. The search (often slow) and the guesses run side by side; the
     guesses with an exchange (7203.T, 0700.HK) come first, as the search ranks numbers poorly
     ("00700" finds a Taiwan fund, not Tencent), then the search's, then the code itself if nothing else."""
@@ -204,7 +196,7 @@ def lookup(code: str, week: str, this_week: str, names: list[str], limit: int = 
             results.append(guessed[plain].result())
         seen = set()
         results = [r for r in results if not (r[0]["symbol"] in seen or seen.add(r[0]["symbol"]))]
-    out = [c | p | {"currency_name": currency_name(p["currency"], names)} for c, p, _ in results if p]
+    out = [c | p | {"currency_name": names.get(p["currency"])} for c, p, _ in results if p]
     errors = [e for _, _, e in results if e]
     if not out and (failed or errors):  # nothing found because Yahoo Finance couldn't be reached
         raise failed or errors[0]

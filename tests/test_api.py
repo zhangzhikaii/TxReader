@@ -387,6 +387,27 @@ def test_dropped_archived_column(tmp_path, monkeypatch):
         assert conn.execute("SELECT name FROM accounts").fetchone()[0] == "现金"
 
 
+def test_old_rates_and_currencies_are_upgraded(tmp_path, monkeypatch):
+    """Currencies gain a code guessed from the name; rates already there count as typed in."""
+    import sqlite3
+    from txreader import db
+    old = sqlite3.connect(tmp_path / "txreader.db")
+    old.executescript("""
+        CREATE TABLE currencies (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, sort INTEGER NOT NULL DEFAULT 0,
+            is_base INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+        INSERT INTO currencies (name, sort, is_base, created_at) VALUES ('人民币', 1, 1, 't'), ('日币', 2, 0, 't'), ('某某币', 3, 0, 't');
+        CREATE TABLE fx_rates (month TEXT NOT NULL, currency_id INTEGER NOT NULL, rate REAL NOT NULL, PRIMARY KEY (month, currency_id));
+        INSERT INTO fx_rates VALUES ('2026-10', 2, 0.047);
+    """)
+    old.commit()
+    old.close()
+    monkeypatch.setenv("TXREADER_DATA", str(tmp_path))
+    with db.connect() as conn:
+        assert [tuple(r) for r in conn.execute("SELECT name, code FROM currencies ORDER BY id")] == [
+            ("人民币", "CNY"), ("日币", "JPY"), ("某某币", "")]
+        assert tuple(conn.execute("SELECT rate, source, rate_at FROM fx_rates").fetchone()) == (0.047, "manual", None)
+
+
 def test_opening_balances_and_rates(client):
     row = {"date": "2026/10/05 08:30:00", "account": "现金", "currency": "日元", "amount": -500,
            "category": "饮食费", "description": ""}
@@ -823,6 +844,93 @@ def test_holdings_prices(client, monkeypatch):
     assert quotes.guesses("7203") == ["7203", "7203.T", "7203.HK"] and quotes.guesses("600519")[1] == "600519.SS"
     monkeypatch.setattr(quotes, "price_for", down)
     assert client.get("/api/holdings/lookup?code=AAA&week=2026-11-02").status_code == 502
+
+
+def test_currency_codes(client):
+    """Codes are guessed from the name, can be changed, must be three letters and unique."""
+    client.post("/api/transactions", json={"add_accounts": True, "rows": [
+        {"date": "2026/10/05 10:00:00", "account": "现金", "currency": c, "amount": -1, "category": "饮食费", "description": ""}
+        for c in ("人民币", "日元", "某某币")]})
+    cur = {c["name"]: c for c in client.get("/api/settings").json()["currencies"]}
+    assert {n: c["code"] for n, c in cur.items()} == {"人民币": "CNY", "日元": "JPY", "某某币": ""}
+    assert client.post("/api/settings/currencies", json={"name": "usd"}).is_success
+    assert {c["name"]: c["code"] for c in client.get("/api/settings").json()["currencies"]}["usd"] == "USD"
+    op = lambda code: client.post("/api/settings/batch", json={"ops": [
+        {"op": "set_code", "kind": "currencies", "id": cur["某某币"]["id"], "code": code}]})
+    assert op("12").status_code == 400 and op("JPY").status_code == 400
+    assert op("thb").is_success
+    assert {c["name"]: c["code"] for c in client.get("/api/settings").json()["currencies"]}["某某币"] == "THB"
+
+
+def test_fetched_rates(client, monkeypatch):
+    """Rates from Yahoo Finance (faked): ended months get their month-end close once, this month
+    the latest (fetched again when stale), typed-in rates are left alone, clearing one refetches it."""
+    from datetime import date
+    from txreader import fx, quotes
+    calls = []
+    live = {"rate": 0.0475}
+
+    def fake_closes(symbol, days, digits=4):
+        calls.append(("closes", symbol, sorted(days)))
+        return {"currency": "CNY", "closes": {d: (d.day / 1000, d.isoformat()) for d in days}}
+
+    def fake_latest(symbol, digits=4):
+        calls.append(("latest", symbol))
+        return {"symbol": symbol, "name": symbol, "currency": "CNY", "price": live["rate"], "at": "2026-11-12T06:00+00:00"}
+    monkeypatch.setattr(quotes, "closes", fake_closes)
+    monkeypatch.setattr(quotes, "latest", fake_latest)
+    monkeypatch.setattr(fx, "_now", lambda: fx.datetime(2026, 11, 12, 6, 10, tzinfo=fx.timezone.utc))
+    today = date(2026, 11, 12)
+
+    client.post("/api/transactions", json={"add_accounts": True, "rows": [
+        {"date": "2026/09/05 10:00:00", "account": "现金", "currency": c, "amount": -1, "category": "饮食费", "description": ""}
+        for c in ("人民币", "日元", "某某币")]})  # 某某币 has no code: typed in
+    client.put("/api/rates/2026-10/日元", json={"rate": 0.05})  # typed in: kept
+
+    assert fx.sync(today) == {"changed": True, "updated": 2, "warnings": []}
+    assert calls == [("closes", "JPYCNY=X", [date(2026, 9, 30)]), ("latest", "JPYCNY=X")]
+    r = client.get("/api/rates").json()
+    assert r["rates"] == {"2026-09": {"日元": 0.03}, "2026-10": {"日元": 0.05}, "2026-11": {"日元": 0.0475}}
+    assert r["sources"] == {"2026-09": {"日元": {"source": "close", "at": "2026-09-30"}},
+                            "2026-11": {"日元": {"source": "live", "at": "2026-11-12T06:00+00:00"}}}
+    assert r["codes"] == {"日元": "JPY", "某某币": ""} and r["base_code"] == "CNY"
+
+    # Opened again: nothing to fetch; 「更新汇率」 fetches this month's again
+    calls.clear()
+    assert fx.sync(today)["changed"] is False and calls == []
+    live["rate"] = 0.048
+    assert fx.refresh(today)["updated"] == 1 and calls == [("latest", "JPYCNY=X")]
+    # Next month: November's live rate becomes its close; December is live
+    calls.clear()
+    assert fx.sync(date(2026, 12, 1))["updated"] == 2
+    rates = client.get("/api/rates").json()["rates"]
+    assert rates["2026-11"]["日元"] == 0.03 and rates["2026-12"]["日元"] == 0.048
+    # Typing over a fetched rate makes it manual; clearing it lets the next sync fetch it
+    client.put("/api/rates", json={"rates": [{"month": "2026-10", "currency": "日元", "rate": None},
+                                             {"month": "2026-09", "currency": "日元", "rate": 0.04}]})
+    calls.clear()
+    fx.sync(date(2026, 12, 1))
+    assert calls == [("closes", "JPYCNY=X", [date(2026, 10, 31)])]
+    r = client.get("/api/rates").json()
+    assert r["rates"]["2026-09"]["日元"] == 0.04 and "2026-09" not in r["sources"]
+
+    # A currency whose rates were all fetched can be deleted (after its transactions are gone it would be)
+    jpy = next(c for c in client.get("/api/settings").json()["currencies"] if c["name"] == "日元")
+    assert jpy["blockers"] == ["有 1 笔交易", "手填了月汇率（先清空）"]
+    # A new code drops the fetched rates
+    client.post("/api/settings/batch", json={"ops": [{"op": "set_code", "kind": "currencies", "id": jpy["id"], "code": "USD"}]})
+    assert set(client.get("/api/rates").json()["rates"]) == {"2026-09"}
+
+    # Yahoo Finance down: nothing changes, a warning says why
+    def down(*a, **k):
+        raise quotes.QuoteError("连不上 Yahoo Finance")
+    monkeypatch.setattr(quotes, "closes", down)
+    out = fx.sync(date(2026, 12, 1))
+    assert out["warnings"] and out["updated"] == 1  # the live rate still came
+    # No code on the base currency: nothing fetched
+    base = next(c for c in client.get("/api/settings").json()["currencies"] if c["name"] == "人民币")
+    client.post("/api/settings/batch", json={"ops": [{"op": "set_code", "kind": "currencies", "id": base["id"], "code": ""}]})
+    assert "本位币" in fx.sync(date(2026, 12, 1))["warnings"][0]
 
 
 def test_account_in_a_pending_row_cant_be_deleted(client):

@@ -4,7 +4,9 @@ and the edits made on the settings page.
 Transactions keep the names as text (so the CSV export stays the same); renaming an item
 renames it in the transactions too.
 """
-from .db import default_base, connect, now, transaction
+import re
+
+from .db import default_base, connect, guess_code, now, transaction
 from .errors import NotFound
 
 KINDS = {"accounts": "account", "currencies": "currency", "categories": "category"}  # table -> transactions column
@@ -80,7 +82,7 @@ def settings() -> dict:
     with connect() as conn:
         out = {}
         for table, col in KINDS.items():
-            extra = {"accounts": ", type", "currencies": ", is_base", "categories": ", fixed"}.get(table, "")
+            extra = {"accounts": ", type", "currencies": ", is_base, code", "categories": ", fixed"}.get(table, "")
             out[table] = [dict(r) for r in conn.execute(
                 f"SELECT id, name{extra},"
                 f" (SELECT COUNT(*) FROM transactions t WHERE t.{col} = x.name) AS used"
@@ -132,14 +134,17 @@ def add(kind: str, name: str) -> int:
             f" VALUES (?, (SELECT COALESCE(MAX(sort), 0) + 1 FROM {kind}), ?) RETURNING id",
             (name, now())).fetchone()[0]
         if kind == "currencies":
+            guess_code(conn, item_id, name)
             default_base(conn)
         return item_id
 
 
 def update(kind: str, item_id: int, changes: dict) -> None:
     """changes: name (renames the transactions too); for categories also fixed (compared month
-    by month by default); for accounts also type (an ACCOUNT_TYPES key, or '' for none). The base currency is fixed (人民币): changing it would make every rate
-    typed in so far wrong."""
+    by month by default); for accounts also type (an ACCOUNT_TYPES key, or '' for none); for
+    currencies also code (ISO 4217, '' for none: rates typed in). A new code drops the rates
+    fetched with the old one (all of them for the base currency), so they are fetched again.
+    The base currency is fixed (人民币): changing it would make every rate typed in so far wrong."""
     kind = _check_kind(kind)
     with connect() as conn:
         old = _get(conn, kind, item_id)
@@ -153,6 +158,18 @@ def update(kind: str, item_id: int, changes: dict) -> None:
             if changes["type"] and changes["type"] not in ACCOUNT_TYPES:
                 raise ValueError(f"没有这种账户类型：{changes['type']}")
             conn.execute("UPDATE accounts SET type = ? WHERE id = ?", (changes["type"], item_id))
+        if changes.get("code") is not None:
+            if kind != "currencies":
+                raise ValueError("只有币种有代码")
+            code = str(changes["code"]).strip().upper()
+            if code and not re.fullmatch(r"[A-Z]{3}", code):
+                raise ValueError(f"币种代码是三个字母（ISO 4217，比如 JPY）：{changes['code']}")
+            if code and conn.execute("SELECT name FROM currencies WHERE code = ? AND id != ?", (code, item_id)).fetchone():
+                raise ValueError(f"已经有币种的代码是 {code} 了")
+            if code != old["code"]:
+                conn.execute("UPDATE currencies SET code = ? WHERE id = ?", (code, item_id))
+                conn.execute("DELETE FROM fx_rates WHERE source != 'manual'"
+                             + ("" if old["is_base"] else " AND currency_id = ?"), () if old["is_base"] else (item_id,))
         if changes.get("name") is not None:
             name = _clean_name(changes["name"])
             if name != old["name"]:
@@ -187,8 +204,8 @@ def _blockers(conn, kind: str, r) -> list[str]:
     ref = {"accounts": "account_id", "currencies": "currency_id"}.get(kind)
     if ref and count(f"SELECT COUNT(*) FROM opening_balances WHERE {ref} = ?", item_id):
         out.append("填了期初余额（先清空）")
-    if kind == "currencies" and count("SELECT COUNT(*) FROM fx_rates WHERE currency_id = ?", item_id):
-        out.append("填了月汇率（先清空）")
+    if kind == "currencies" and count("SELECT COUNT(*) FROM fx_rates WHERE currency_id = ? AND source = 'manual'", item_id):
+        out.append("手填了月汇率（先清空）")  # the fetched ones go with it
     if ref and count(f"SELECT COUNT(*) FROM positions WHERE {ref} = ?", item_id):
         out.append("持仓里用到了")
     if n := count(f"SELECT COUNT(*) FROM email_rules WHERE {col} = ?", name):
@@ -209,6 +226,7 @@ def delete(kind: str, item_id: int) -> None:
         if kind == "currencies":
             conn.execute("UPDATE accounts SET value_currency_id = NULL WHERE value_currency_id = ?", (item_id,))
             conn.execute("DELETE FROM account_currencies WHERE currency_id = ?", (item_id,))
+            conn.execute("DELETE FROM fx_rates WHERE currency_id = ?", (item_id,))
         if kind == "accounts":
             conn.execute("DELETE FROM account_currencies WHERE account_id = ?", (item_id,))
         conn.execute(f"DELETE FROM {kind} WHERE id = ?", (item_id,))
@@ -242,12 +260,14 @@ def apply(ops: list[dict]) -> None:
     """The settings page's edits of one list, saved together: all or nothing. Each op is
     {"op": "add", "kind", "name"}, {"op": "rename", "kind", "id", "name"}, {"op": "delete", "kind", "id"},
     {"op": "set_fixed", "kind": "categories", "id", "fixed"}, {"op": "set_type", "kind": "accounts", "id", "type"},
+    {"op": "set_code", "kind": "currencies", "id", "code"},
     {"op": "add_currency", "id" (account), "name"} or {"op": "remove_currency", "id", "name"}."""
     actions = {
         "add": lambda o: add(o["kind"], o.get("name")),
         "rename": lambda o: update(o["kind"], o["id"], {"name": o.get("name")}),
         "set_fixed": lambda o: update(o["kind"], o["id"], {"fixed": bool(o.get("fixed"))}),
         "set_type": lambda o: update(o["kind"], o["id"], {"type": o.get("type") or ""}),
+        "set_code": lambda o: update(o["kind"], o["id"], {"code": o.get("code") or ""}),
         "delete": lambda o: delete(o["kind"], o["id"]),
         "add_currency": lambda o: add_account_currency(o["id"], o.get("name")),
         "remove_currency": lambda o: remove_account_currency(o["id"], o.get("name")),

@@ -3,8 +3,8 @@
 
 - Opening balances: what each account held in each currency at the end of the start month.
   Later months follow from them plus the transactions after the start month.
-- Monthly rates: typed in by hand, 1 unit of a currency = rate units of the base currency.
-  The base currency itself is always 1 and not stored.
+- Monthly rates: 1 unit of a currency = rate units of the base currency; typed in, or fetched
+  from Yahoo Finance for currencies with a code (fx.py). The base currency is always 1 and not stored.
 """
 import re
 from datetime import date
@@ -112,21 +112,26 @@ def months_between(first: str, last: str) -> list[str]:
 
 
 def rates(today: date | None = None) -> dict:
-    """{"base": name or None, "currencies": [the others, in list order],
-        "months": [newest first], "rates": {month: {currency: rate}}}
+    """{"base": name or None, "base_code", "currencies": [the others, in list order],
+        "codes": {currency: ISO code or ""}, "months": [newest first], "rates": {month: {currency: rate}},
+        "sources": {month: {currency: {"source": "live" | "close", "at"}}} (fetched ones only), "this_month"}
     Months run from the start month (or the first transaction, if earlier) to this month (or
     the last transaction, if later), plus any month that already has a rate."""
     today = today or date.today()
     with connect() as conn:
-        base = conn.execute("SELECT name FROM currencies WHERE is_base = 1").fetchone()
-        currencies = [r[0] for r in conn.execute(
-            "SELECT name FROM currencies WHERE is_base = 0 ORDER BY sort, id")]
+        base = conn.execute("SELECT name, code FROM currencies WHERE is_base = 1").fetchone()
+        others = conn.execute("SELECT name, code FROM currencies WHERE is_base = 0 ORDER BY sort, id").fetchall()
         table: dict[str, dict[str, float]] = {}
-        for r in conn.execute("SELECT f.month, c.name, f.rate FROM fx_rates f JOIN currencies c ON c.id = f.currency_id"):
+        sources: dict[str, dict[str, dict]] = {}
+        for r in conn.execute("SELECT f.month, c.name, f.rate, f.source, f.rate_at"
+                              " FROM fx_rates f JOIN currencies c ON c.id = f.currency_id"):
             table.setdefault(r[0], {})[r[1]] = r[2]
+            if r[3] != "manual":
+                sources.setdefault(r[0], {})[r[1]] = {"source": r[3], "at": r[4]}
         months = _all_months(conn, today, extra=list(table))
-    return {"base": base[0] if base else None, "currencies": currencies,
-            "months": months[::-1], "rates": table}
+    return {"base": base[0] if base else None, "base_code": base[1] if base else "",
+            "currencies": [r[0] for r in others], "codes": {r[0]: r[1] for r in others},
+            "months": months[::-1], "rates": table, "sources": sources, "this_month": f"{today.year}-{today.month:02d}"}
 
 
 def _all_months(conn, today: date, extra=()) -> list[str]:
@@ -139,7 +144,7 @@ def _all_months(conn, today: date, extra=()) -> list[str]:
 
 
 def set_rate(month: str, currency: str, rate: float | None) -> None:
-    """rate None clears it."""
+    """A rate typed in (never overwritten by fx.sync); None clears it (and lets fx.sync fetch it)."""
     month = _check_month(month)
     with connect() as conn:
         cid = _currency_id(conn, currency)
@@ -151,8 +156,9 @@ def set_rate(month: str, currency: str, rate: float | None) -> None:
         rate = float(rate)
         if not rate > 0:
             raise ValueError("汇率要大于 0")
-        conn.execute("INSERT INTO fx_rates (month, currency_id, rate) VALUES (?, ?, ?)"
-                     " ON CONFLICT (month, currency_id) DO UPDATE SET rate = excluded.rate", (month, cid, rate))
+        conn.execute("INSERT INTO fx_rates (month, currency_id, rate, source, rate_at) VALUES (?, ?, ?, 'manual', NULL)"
+                     " ON CONFLICT (month, currency_id) DO UPDATE SET rate = excluded.rate,"
+                     " source = 'manual', rate_at = NULL", (month, cid, rate))
 
 
 def save_rates(rates: list[dict]) -> None:

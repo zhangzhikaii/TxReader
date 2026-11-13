@@ -265,6 +265,8 @@ table.sheet a.valued:hover { text-decoration:underline; }
 .hero .gain-line { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 16px; }
 .hero .gain-line .name { font-weight:600; color:var(--text); min-width:72px; }
 #hd-rows td .pct { display:block; font-size:12px; }
+#fx-head .price-note, #fx-rows .price-note { display:block; font-size:12px; font-weight:normal; color:var(--muted); white-space:nowrap; }
+.code-input { width:4.5em; text-transform:uppercase; }
 #hd-rows .price-note, #hd-find .price-note { display:block; font-size:12px; color:var(--muted); white-space:nowrap; }
 #hd-find .price-note.warn { color:#b45309; }
 #hd-rows .hd-code { display:flex; align-items:center; gap:2px; }

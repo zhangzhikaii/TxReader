@@ -2,7 +2,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from .. import books, portfolio
+from .. import books, fx, portfolio
 
 router = APIRouter()
 
@@ -75,6 +75,18 @@ def save_rates(body: RateEdits):
     """Several rates saved together: all or nothing."""
     books.save_rates([r.model_dump() for r in body.rates])
     return {"ok": True}
+
+
+@router.post("/api/rates/sync")
+def sync_rates():
+    """When the rates page is opened: fetch what is missing or stale from Yahoo Finance (see fx.py)."""
+    return fx.sync()
+
+
+@router.post("/api/rates/refresh")
+def refresh_rates():
+    """「更新汇率」: this month's rates fetched again now."""
+    return fx.refresh()
 
 
 @router.put("/api/rates/{month}/{currency}")

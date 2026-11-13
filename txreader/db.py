@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS currencies (
     name       TEXT NOT NULL UNIQUE,
     sort       INTEGER NOT NULL DEFAULT 0,
     is_base    INTEGER NOT NULL DEFAULT 0,  -- the one everything is converted into (at most one)
+    code       TEXT NOT NULL DEFAULT '',   -- ISO 4217 (JPY), for Yahoo Finance; '' = none (rates typed in)
     created_at TEXT NOT NULL
 );
 
@@ -144,11 +145,13 @@ CREATE TABLE IF NOT EXISTS opening_balances (
     PRIMARY KEY (account_id, currency_id)
 );
 
--- Monthly rates, typed in by hand: 1 unit of the currency = rate units of the base currency
+-- Monthly rates: 1 unit of the currency = rate units of the base currency (see txreader/fx.py)
 CREATE TABLE IF NOT EXISTS fx_rates (
     month       TEXT NOT NULL,          -- 2026-10
     currency_id INTEGER NOT NULL REFERENCES currencies(id),
     rate        REAL NOT NULL CHECK (rate > 0),
+    source      TEXT NOT NULL DEFAULT 'manual',  -- manual (typed in) / live (latest, this month) / close (the month's last close, final)
+    rate_at     TEXT,                   -- live: when (UTC, ISO); close: the trading day
     PRIMARY KEY (month, currency_id)
 );
 
@@ -252,6 +255,10 @@ def _migrate(conn) -> None:
             conn.execute(f"UPDATE {table} SET sort = id")
         if table == "currencies" and "is_base" not in cols:
             conn.execute("ALTER TABLE currencies ADD COLUMN is_base INTEGER NOT NULL DEFAULT 0")
+        if table == "currencies" and "code" not in cols:  # and then an ISO code, guessed from the name
+            conn.execute("ALTER TABLE currencies ADD COLUMN code TEXT NOT NULL DEFAULT ''")
+            for cid, name in conn.execute("SELECT id, name FROM currencies").fetchall():
+                guess_code(conn, cid, name)
         if "archived" in cols:
             conn.execute(f"ALTER TABLE {table} DROP COLUMN archived")
 
@@ -267,6 +274,11 @@ def _migrate(conn) -> None:
         conn.execute("ALTER TABLE accounts ADD COLUMN type TEXT NOT NULL DEFAULT ''")
     if "value_currency_id" not in cols:  # and then the currency 持仓 values an investment account in
         conn.execute("ALTER TABLE accounts ADD COLUMN value_currency_id INTEGER REFERENCES currencies(id)")
+    # Rates gained where they came from (Yahoo Finance or typed in); what was there was typed in
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(fx_rates)")}
+    if "source" not in cols:
+        conn.execute("ALTER TABLE fx_rates ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
+        conn.execute("ALTER TABLE fx_rates ADD COLUMN rate_at TEXT")
     # Securities in 持仓 gained what they cost (per unit)
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(positions)")}
     if "unit_cost" not in cols:
@@ -292,8 +304,38 @@ def _migrate(conn) -> None:
 
 def _add_name(conn, table: str, name: str, t: str) -> None:
     """Add a name to a list (at the end) unless it is already there."""
-    conn.execute(f"INSERT OR IGNORE INTO {table} (name, sort, created_at)"
-                 f" VALUES (?, (SELECT COALESCE(MAX(sort), 0) + 1 FROM {table}), ?)", (name, t))
+    r = conn.execute(f"INSERT OR IGNORE INTO {table} (name, sort, created_at)"
+                     f" VALUES (?, (SELECT COALESCE(MAX(sort), 0) + 1 FROM {table}), ?) RETURNING id", (name, t)).fetchone()
+    if r and table == "currencies":
+        guess_code(conn, r[0], name)
+
+
+# ISO code -> what a currency may be called (the list is free text). Only used to fill in the
+# code when a currency is added; it can be changed on the settings page.
+CURRENCY_NAMES = {
+    "CNY": ["人民币", "RMB", "CNY"],
+    "JPY": ["日元", "日币", "日円", "円", "JPY"],
+    "USD": ["美元", "美金", "USD"],
+    "HKD": ["港币", "港元", "HKD"],
+    "EUR": ["欧元", "EUR"],
+    "GBP": ["英镑", "GBP"],
+    "AUD": ["澳元", "澳币", "AUD"],
+    "CAD": ["加元", "加币", "CAD"],
+    "SGD": ["新加坡元", "新币", "SGD"],
+    "KRW": ["韩元", "KRW"],
+    "TWD": ["新台币", "台币", "TWD"],
+    "CHF": ["瑞士法郎", "CHF"],
+}
+
+
+def guess_code(conn, currency_id: int, name: str) -> None:
+    """Set a currency's code from its name, if recognized and no other currency has it."""
+    up = name.strip().upper()
+    iso = next((k for k, names in CURRENCY_NAMES.items() if up in [n.upper() for n in names]), None)
+    if iso is None and len(up) == 3 and up.isascii() and up.isalpha():
+        iso = up
+    if iso and not conn.execute("SELECT 1 FROM currencies WHERE code = ? AND id != ?", (iso, currency_id)).fetchone():
+        conn.execute("UPDATE currencies SET code = ? WHERE id = ? AND code = ''", (iso, currency_id))
 
 
 def register_accounts(conn, pairs, categories=()) -> None:
