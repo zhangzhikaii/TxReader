@@ -276,3 +276,14 @@ def test_network_errors_are_retried(monkeypatch):
     monkeypatch.setattr(mail.httpx, "request", lambda *a, **k: (_ for _ in ()).throw(httpx.ConnectTimeout("timed out")))
     with pytest.raises(mail.MailError, match="试了 3 次"):
         mail._messages("t", "a", "b")
+
+
+def test_account_used_by_a_rule_cant_be_deleted(client):
+    acc = client.post("/api/settings/accounts", json={"name": "某某卡"}).json()["id"]
+    rid = client.post("/api/email/rules", json=RULE).json()["id"]
+    r = client.delete(f"/api/settings/accounts/{acc}")
+    assert r.status_code == 400 and "邮件规则" in r.json()["detail"]
+    card = next(a for a in client.get("/api/settings").json()["accounts"] if a["id"] == acc)
+    assert card["blockers"] == ["有 1 条邮件规则在用（先改规则）"]
+    client.patch(f"/api/email/rules/{rid}", json={"account": "现金"})
+    assert client.delete(f"/api/settings/accounts/{acc}").is_success

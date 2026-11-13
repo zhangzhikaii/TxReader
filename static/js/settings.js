@@ -120,7 +120,8 @@ function renderList(kind) {
     }
     const name = live ? `<input data-act="name" value="${esc(ed.names[it.id] ?? it.name)}">` : esc(it.name);
     const del = !ed ? "" : gone ? `<button class="icon" data-act="undelete" title="撤销删除">↺</button>`
-      : it.used ? "" : `<button class="icon" data-act="delete" title="删除（还没有交易用它）">✕</button>`;
+      : it.blockers.length ? `<span class="muted" title="${esc("不能删除：" + it.blockers.join("；"))}">🔒</span>`
+      : `<button class="icon" data-act="delete" title="删除（没有任何地方用到它）">✕</button>`;
     return `<tr data-kind="${kind}" data-id="${it.id}" class="${gone ? "deleted" : ""}">
       <td>${items.length > 1 ? `<span class="handle" title="按住拖动调整顺序" aria-label="拖动调整顺序">☰</span>` : ""}</td>
       <td>${name}</td>${extra}<td class="num">${it.used}</td><td>${del}</td></tr>`;

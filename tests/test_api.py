@@ -741,3 +741,17 @@ def test_holdings(client):
     # No rows: the snapshot is gone
     client.put("/api/holdings", json={"account_id": acc, "week": week, "rows": []})
     assert portfolio.holdings(acc, week, today=date(2026, 11, 12))["history"] == []
+
+
+def test_account_in_a_pending_row_cant_be_deleted(client):
+    acc = client.post("/api/settings/accounts", json={"name": "某银行"}).json()["id"]
+    row = upload(client, b"shot1")["pending"][0]
+    client.patch(f"/api/pending/{row['id']}", json={"account": "某银行"})
+    r = client.delete(f"/api/settings/accounts/{acc}")
+    assert r.status_code == 400 and "待核对" in r.json()["detail"]
+    batch = client.post("/api/settings/batch", json={"ops": [{"op": "delete", "kind": "accounts", "id": acc}]})
+    assert batch.status_code == 400
+    client.post("/api/pending/delete", json={"ids": [row["id"]]})
+    accounts = client.get("/api/settings").json()["accounts"]
+    assert next(a for a in accounts if a["id"] == acc)["blockers"] == []
+    assert client.delete(f"/api/settings/accounts/{acc}").is_success

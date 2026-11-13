@@ -76,7 +76,7 @@ class UnknownNames(ValueError):
 
 def settings() -> dict:
     """Everything the settings page shows: each list in order, with how many transactions use
-    each item (an unused one can be deleted)."""
+    each item and why it can't be deleted (`blockers`, empty when it can)."""
     with connect() as conn:
         out = {}
         for table, col in KINDS.items():
@@ -98,6 +98,9 @@ def settings() -> dict:
             c["is_base"] = bool(c["is_base"])
         for c in out["categories"]:
             c["fixed"] = bool(c["fixed"])
+        for table in KINDS:
+            for it in out[table]:
+                it["blockers"] = _blockers(conn, table, _get(conn, table, it["id"]))
         out["account_types"] = type_list()
         return out
 
@@ -170,31 +173,44 @@ def reorder(kind: str, ids: list[int]) -> None:
             conn.execute(f"UPDATE {kind} SET sort = ? WHERE id = ?", (i, item_id))
 
 
+def _blockers(conn, kind: str, r) -> list[str]:
+    """Why this item can't be deleted (empty: it can). Names are kept as text in transactions,
+    email rules and pending rows, so a name still used there would only come back on the next
+    import; opening balances, rates and holdings are data that must not go with it."""
+    col, name, item_id = KINDS[kind], r["name"], r["id"]
+    count = lambda sql, *args: conn.execute(sql, args).fetchone()[0]
+    out = []
+    if n := count(f"SELECT COUNT(*) FROM transactions WHERE {col} = ?", name):
+        out.append(f"有 {n} 笔交易")
+    if kind == "currencies" and r["is_base"]:
+        out.append("是本位币")
+    ref = {"accounts": "account_id", "currencies": "currency_id"}.get(kind)
+    if ref and count(f"SELECT COUNT(*) FROM opening_balances WHERE {ref} = ?", item_id):
+        out.append("填了期初余额（先清空）")
+    if kind == "currencies" and count("SELECT COUNT(*) FROM fx_rates WHERE currency_id = ?", item_id):
+        out.append("填了月汇率（先清空）")
+    if ref and count(f"SELECT COUNT(*) FROM positions WHERE {ref} = ?", item_id):
+        out.append("持仓里用到了")
+    if n := count(f"SELECT COUNT(*) FROM email_rules WHERE {col} = ?", name):
+        out.append(f"有 {n} 条邮件规则在用（先改规则）")
+    if n := count("SELECT COUNT(*) FROM ocr_rows WHERE status = 'pending'"
+                  f" AND json_extract(draft, '$.{col}') = ?", name):
+        out.append(f"有 {n} 条待核对行在用（先入库或删除）")
+    return out
+
+
 def delete(kind: str, item_id: int) -> None:
-    """Only items no transaction uses can be deleted."""
+    """Only items nothing refers to can be deleted (see _blockers)."""
     kind = _check_kind(kind)
     with connect() as conn:
         r = _get(conn, kind, item_id)
-        col = KINDS[kind]
-        if conn.execute(f"SELECT 1 FROM transactions WHERE {col} = ? LIMIT 1", (r["name"],)).fetchone():
-            raise ValueError(f"「{r['name']}」已经有交易在用，不能删除")
-        if kind == "currencies" and r["is_base"]:
-            raise ValueError("本位币不能删除")
-        # Opening balances and rates are data too: don't drop them along with a typo'd name
-        ref = {"accounts": "account_id", "currencies": "currency_id"}.get(kind)
-        if ref and conn.execute(f"SELECT 1 FROM opening_balances WHERE {ref} = ? LIMIT 1", (item_id,)).fetchone():
-            raise ValueError(f"「{r['name']}」填了期初余额，不能删除（先清空期初余额）")
-        if kind == "currencies" and conn.execute(
-                "SELECT 1 FROM fx_rates WHERE currency_id = ? LIMIT 1", (item_id,)).fetchone():
-            raise ValueError(f"「{r['name']}」填了月汇率，不能删除（先清空它的汇率）")
-        if ref and conn.execute(f"SELECT 1 FROM positions WHERE {ref} = ? LIMIT 1", (item_id,)).fetchone():
-            raise ValueError(f"「{r['name']}」在持仓里用到了，不能删除")
+        if why := _blockers(conn, kind, r):
+            raise ValueError(f"「{r['name']}」不能删除：{'；'.join(why)}")
         if kind == "currencies":
             conn.execute("UPDATE accounts SET value_currency_id = NULL WHERE value_currency_id = ?", (item_id,))
+            conn.execute("DELETE FROM account_currencies WHERE currency_id = ?", (item_id,))
         if kind == "accounts":
             conn.execute("DELETE FROM account_currencies WHERE account_id = ?", (item_id,))
-        if kind == "currencies":
-            conn.execute("DELETE FROM account_currencies WHERE currency_id = ?", (item_id,))
         conn.execute(f"DELETE FROM {kind} WHERE id = ?", (item_id,))
 
 
