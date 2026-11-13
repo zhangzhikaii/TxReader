@@ -29,7 +29,7 @@ function route() {
   showImage(null);
   if (view === "add") { if (method !== "manual") loadPending(); if (method === "email") loadEmailState(); loadSuggestions(); }
   if (view === "transactions") loadSuggestions().then(fillTxFilters).then(loadTransactions); // lists may have changed in settings
-  if (view === "settings") { loadSettings(); loadRates(); loadEmailSettings(); }
+  if (view === "settings") { loadSettings(); loadEmailSettings(); }
   if (view === "balances") loadBalances($("bal-month").value || null);
   if (view === "holdings") loadHoldings();
   if (view === "monthly") loadMonthlyPage();

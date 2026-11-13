@@ -87,6 +87,7 @@ async function loadSettings() {
   try { lists = await api("/api/settings"); } catch (e) { return flash("set-status", "读取失败：" + e.message); }
   for (const kind of Object.keys(LIST_LABELS)) renderList(kind);
   loadOpening();
+  loadRates(); // the rate table has a column per currency, so it follows the currency list
 }
 function renderList(kind) {
   const items = lists[kind], ed = listEdit[kind];

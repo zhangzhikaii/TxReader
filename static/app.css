@@ -132,6 +132,7 @@ td input.changed { border-color:#f59e0b; background:#fffbeb; } /* edited, not sa
 .chip.added { background:#dcfce7; }
 table.grid td.missing { background:#fffbeb; }
 .add-row { display:flex; gap:8px; margin-top:12px; }
+.add-row[hidden] { display:none; } /* display:flex would override [hidden] */
 .add-row input { max-width:240px; }
 .settings-help { font-size:13px; color:var(--muted); margin:-4px 0 12px; }
 /* Opening balances and rates: a grid of number inputs */
@@ -242,7 +243,6 @@ h2.with-action button { font-size:13px; font-weight:normal; padding:4px 10px; }
 #hd-rows input { width:100%; min-width:70px; }
 #hd-rows td.num input { text-align:right; min-width:90px; }
 #hd-history tr.current > td { background:#ecfdf5; }
-#hd-add[hidden] { display:none; }
 #hd-add button { margin-right:8px; }
 /* 结余: an investment account's market value under its name */
 table.sheet a.valued { display:block; font-size:12px; color:var(--text); text-decoration:none; margin-top:2px; }
