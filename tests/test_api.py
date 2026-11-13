@@ -714,6 +714,9 @@ def test_holdings(client):
     assert [(r["cost_converted"], r["gain"]) for r in v["rows"]] == [
         (100000, 20000), (None, None), (None, None), (14000, 2800), (None, None)]
     assert v["rows"][0]["ratio"] == 0.2 and v["uncosted"] == 1
+    # The same gains before converting: in each security's own currency, even without a rate
+    assert [(r["own_gain"], r["own_ratio"]) for r in v["rows"]] == [
+        (20000, 0.2), (None, None), (None, None), (20, 0.2), (None, None)]
     assert (v["position_cost"], v["position_gain"], v["position_ratio"]) == (114000, 22800, 0.2)
     assert v["market_value"] == 154000 + 16800 + 500
     client.put("/api/holdings", json={"account_id": acc, "week": week, "rows": rows})
@@ -725,7 +728,7 @@ def test_holdings(client):
 
     # The balance sheet shows the latest valuation by the month's end
     bal = client.get("/api/balances?month=2026-10").json()
-    assert bal["valuations"]["证券"] == {"week": week, "currency": "日元", "market_value": 154000,
+    assert bal["valuations"]["证券"] == {"account_id": acc, "week": week, "currency": "日元", "market_value": 154000,
                                         "ratio": round(4000 / 150000, 6), "position_ratio": None}
     assert client.get("/api/balances?month=2026-09").json()["valuations"] == {}
 

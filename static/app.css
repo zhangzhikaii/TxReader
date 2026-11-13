@@ -244,6 +244,20 @@ h2.with-action button { font-size:13px; font-weight:normal; padding:4px 10px; }
 #hd-rows td.num input { text-align:right; min-width:90px; }
 #hd-history tr.current > td { background:#ecfdf5; }
 #hd-add button { margin-right:8px; }
+/* 持仓: column order chips and the sort buttons in the header */
+.hd-colbar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:0 0 8px; }
+.hd-colbar > button { font-size:13px; padding:4px 10px; }
+#hd-cols { display:flex; flex-wrap:wrap; align-items:center; gap:4px; }
+#hd-cols .chip { padding:1px 2px; }
+#hd-cols .chip button:hover { color:var(--accent); }
+#hd-cols .chip button:disabled { display:inline; visibility:hidden; }
+#hd-cols > button { font-size:13px; padding:3px 10px; }
+#hd-cols[hidden] { display:none; }
+th .sort-btn { background:none; padding:2px 3px; margin-left:4px; line-height:0; vertical-align:middle; border-radius:4px; }
+th .sort-btn path { fill:#cbd5e1; }
+th .sort-btn:hover { background:var(--line); }
+th .sort-btn:hover path { fill:#94a3b8; }
+th .sort-btn path.lit { fill:var(--accent); }
 /* 结余: an investment account's market value under its name */
 table.sheet a.valued { display:block; font-size:12px; color:var(--text); text-decoration:none; margin-top:2px; }
 table.sheet a.valued:hover { text-decoration:underline; }
@@ -251,3 +265,4 @@ table.sheet a.valued:hover { text-decoration:underline; }
 .hero .gain-line { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 16px; }
 .hero .gain-line .name { font-weight:600; color:var(--text); min-width:72px; }
 #hd-rows td .pct { display:block; font-size:12px; }
+#hd-rows td .unit { font-size:12px; color:var(--muted); margin-left:3px; }

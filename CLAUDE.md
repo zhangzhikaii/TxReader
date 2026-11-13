@@ -40,7 +40,7 @@ static/js/                前端脚本，原生 JS、无构建步骤；普通 <s
   manual.js               手动输入、确认框；loadSuggestions（清单提示，别的页面也用）
   email-import.js         从邮件更新、没认出来的邮件
   transactions.js / monthly.js / balances.js / security.js   各自的页面（交易页：周期切换 + 高级筛选、「导出 CSV」导出当前筛选出的交易、和设置页一样上锁 / 统一保存（`txEdit`，`PATCH /api/transactions`）；收支页点种类跳到交易页（`txPreset`））
-  holdings.js             持仓页：选账户、按周切换（‹ › / 本周）、上锁 / 统一保存（`hdEdit`，`PUT /api/holdings` 整周替换）；没填的周从上一次的持仓开始填
+  holdings.js             持仓页：选账户、按周切换（‹ › / 本周）、上锁 / 统一保存（`hdEdit`，`PUT /api/holdings` 整周替换）；没填的周从上一次的持仓开始填；列顺序（`HD_COLS` / `hdOrder`，「⇄ 列顺序」）和按某列排序证券（表头的排序箭头，`hdSort`，只在只读时，现金排在最后）存在 localStorage，不上锁
   trend.js                收支页的标签切换（本月 / 每月对比）和每月对比表（默认显示设置里标为「固定」的种类，其余自己加）；点格子跳到交易页（`txPreset`）
   settings.js             设置页标签、上锁 / 统一保存（`lockable`）、账户 / 币种 / 种类清单（拖动排序）
   opening.js / rates.js / email-settings.js                              设置里的期初余额、月汇率、邮件

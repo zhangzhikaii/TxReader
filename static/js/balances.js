@@ -77,7 +77,7 @@ function renderBalanceRows() {
     if (!v) return "";
     const pct = (label, r) => r == null ? "" : ` · ${label} <span class="${amtClass(r)}">${(r > 0 ? "+" : "") + (r * 100).toFixed(2)}%</span>`;
     const ratio = pct("较结余", v.ratio) + pct("持仓", v.position_ratio);
-    return `<a class="valued" href="#holdings" title="${v.week} 那周的持仓">市值 ${v.market_value == null ? "缺汇率" : fmtAmount(v.market_value)} ${esc(v.currency)}${ratio}` +
+    return `<a class="valued" href="#holdings" data-hd-account="${v.account_id}" data-hd-week="${v.week}" title="看这个账户 ${v.week} 那周的持仓">市值 ${v.market_value == null ? "缺汇率" : fmtAmount(v.market_value)} ${esc(v.currency)}${ratio}` +
            `<span class="muted">（${+v.week.slice(5, 7)}/${+v.week.slice(8)} 那周）</span></a>`;
   };
   const row = a => `<tr${grouped() ? ' class="in-group"' : ""}><td>${esc(a.name)}${a.count ? `<span class="count">${a.count} 笔</span>` : ""}${valued(a)}</td>${cur.map(c => moneyCell(a.balances[c])).join("")}</tr>`;
@@ -95,6 +95,11 @@ function renderBalanceRows() {
     `<tr><td colspan="${cur.length + 1}" class="empty">${bal.accounts.length ? "这个月没有交易、也没有余额的账户都隐藏了" : "还没有账户"}</td></tr>`;
   flash("bal-status", hidden ? `隐藏了 ${hidden} 个账户` : "");
 }
+// A market value opens that account's 持仓 at the week it shows (the link's #holdings does the switch)
+$("bal-rows").addEventListener("click", e => {
+  const a = e.target.closest("a[data-hd-account]");
+  if (a) hdPreset = { account: +a.dataset.hdAccount, week: a.dataset.hdWeek };
+});
 $("bal-hide-quiet").addEventListener("change", e => {
   save("tx.balances.hideQuiet", e.target.checked ? "1" : "0");
   if (bal?.month) renderBalanceRows();

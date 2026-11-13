@@ -94,8 +94,9 @@ def _row_value(r: dict) -> float:
 
 def _valuation(conn, account: dict, week: str, rows: list[dict]) -> dict:
     """{"currency", "rows": [{"value" (own currency), "converted" (account's currency or None),
-                              "cost", "cost_converted", "gain", "ratio"}: the last four for
-                              securities with a unit cost, else None],
+                              "cost", "cost_converted", "gain", "ratio", "own_gain", "own_ratio"}:
+                              the last six for securities with a unit cost, else None; own_* in
+                              the security's own currency, the others in the account's],
         "market_value", "cost", "gain", "ratio": against the balance,
         "position_cost", "position_gain", "position_ratio": the securities with a unit cost,
         "uncosted": securities without one (each value None when it can't be worked out),
@@ -120,9 +121,12 @@ def _valuation(conn, account: dict, week: str, rows: list[dict]) -> dict:
     for r in rows:
         own = round(_row_value(r), 2)
         v = {"value": own, "converted": convert(own, r["currency"]),
-             "cost": None, "cost_converted": None, "gain": None, "ratio": None}
+             "cost": None, "cost_converted": None, "gain": None, "ratio": None,
+             "own_gain": None, "own_ratio": None}
         if r["kind"] == "security" and r.get("unit_cost") is not None:
             v["cost"] = round(r["quantity"] * r["unit_cost"], 2)
+            v["own_gain"] = round(own - v["cost"], 2)
+            v["own_ratio"] = round(v["own_gain"] / v["cost"], 6) if v["cost"] > 0 else None
             v["cost_converted"] = convert(v["cost"], r["currency"])
             if v["converted"] is not None and v["cost_converted"] is not None:
                 v["gain"] = round(v["converted"] - v["cost_converted"], 2)
@@ -242,7 +246,7 @@ def save(account_id: int, week: str, rows: list[dict], currency: str | None = No
 
 def at_month_end(month: str) -> dict[str, dict]:
     """For the balance sheet: account name -> the latest snapshot in a week ending by the end of
-    `month`: {"week", "currency", "market_value", "ratio" (against the balance), "position_ratio"}."""
+    `month`: {"account_id", "week", "currency", "market_value", "ratio" (against the balance), "position_ratio"}."""
     y, m = int(month[:4]), int(month[5:])
     last = (date(y + m // 12, m % 12 + 1, 1) - timedelta(days=1))
     with connect() as conn:
@@ -252,6 +256,6 @@ def at_month_end(month: str) -> dict[str, dict]:
                              (a["id"], (last - timedelta(days=6)).isoformat())).fetchone()[0]
             if w:
                 v = _valuation(conn, a, w, _rows(conn, a["id"], w))
-                out[a["name"]] = {"week": w, "currency": a["currency"], "market_value": v["market_value"],
+                out[a["name"]] = {"account_id": a["id"], "week": w, "currency": a["currency"], "market_value": v["market_value"],
                                   "ratio": v["ratio"], "position_ratio": v["position_ratio"]}
         return out

@@ -31,7 +31,7 @@ function route() {
   if (view === "transactions") loadSuggestions().then(fillTxFilters).then(loadTransactions); // lists may have changed in settings
   if (view === "settings") { loadSettings(); loadEmailSettings(); }
   if (view === "balances") loadBalances($("bal-month").value || null);
-  if (view === "holdings") loadHoldings();
+  if (view === "holdings") { const p = hdPreset; hdPreset = null; p ? loadHoldings(p.account, p.week) : loadHoldings(); }
   if (view === "monthly") loadMonthlyPage();
   if (view === "security") loadSecurity();
 }
