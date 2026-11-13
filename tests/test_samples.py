@@ -75,7 +75,7 @@ def test_sample(case):
 
 
 # Sources whose screenshots are scrolling lists (BOC uses one detail page per transaction)
-LIST_SOURCES = {"wechat", "icbc"}
+LIST_SOURCES = {"wechat", "icbc", "saison"}
 
 
 @pytest.mark.parametrize("case", [c for c in CASES if c.parent.name.lower() in LIST_SOURCES],

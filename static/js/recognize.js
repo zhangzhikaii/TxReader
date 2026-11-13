@@ -10,6 +10,8 @@ const SOURCES = {
             defaults: { account: "工行", currency: "人民币", category: "饮食费" } },
   suica:  { hint: "点击或拖拽 Apple 钱包里 Suica 单笔交易的详情页截图到这里（每张一笔，可多张）",
             defaults: { account: "Suica", currency: "日元", category: "交通费" } },
+  saison: { hint: "点击或拖拽セゾン（Saison）App「明細」列表截图到这里（可多张）",
+            defaults: { account: "saison", currency: "日元", category: "高速费" } },
   receipt: { hint: "点击或拖拽小票照片到这里（每张一笔，可多张）。店名是尽力识别的，请对照大图核对",
             defaults: { account: "现金", currency: "日元", category: "饮食费" } },
 };
