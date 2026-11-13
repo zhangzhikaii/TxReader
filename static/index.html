@@ -281,6 +281,7 @@
       <span id="hd-week" class="week-label"></span>
       <button class="secondary" id="hd-next" title="下一周">›</button>
       <button class="secondary" id="hd-today">本周</button>
+      <button class="secondary" id="hd-refresh" title="从 Yahoo Finance 取这周的最新价格" hidden>⟳ 更新价格</button>
       <span id="hd-status" class="status"></span>
     </div>
     <div id="hd-warn"></div>
@@ -295,8 +296,17 @@
         <tbody id="hd-rows"></tbody>
       </table></div>
       <div class="add-row" id="hd-add" hidden><button class="secondary" data-hd-add="security">＋ 证券</button><button class="secondary" data-hd-add="cash">＋ 现金</button></div>
-      <div class="legend">每周填一次。证券的金额 = 数量 × 现价；成本价是每单位的平均成本（可不填），持仓盈亏 = 金额 − 数量 × 成本价，「原币」是证券自己的币种，「折算」按账户的币种；现金可以是任何币种。折算用这周周日所在月份的月汇率，占比 = 这一行折算后的金额 ÷ 账户市值（含现金）。成本 = 结余页这个账户在这周周日的余额（期初余额 + 之后的交易），较结余盈亏 = 市值 − 成本，它包括现金、已经卖掉的盈亏和汇差，持仓盈亏只算现在拿着、填了成本价的证券。只是看看，不会记成交易</div>
+      <div class="legend">每周填一次。证券的金额 = 数量 × 现价；成本价是每单位的平均成本（可不填），持仓盈亏 = 金额 − 数量 × 成本价，「原币」是证券自己的币种，「折算」按账户的币种；现金可以是任何币种。有行情代码的证券从 Yahoo Finance 取价格（只把代码发出去）：这周内是最新价，可以点「更新价格」；这周结束后换成这周最后一个交易日的收盘价，以后不再改；自己改过的价格（手填）不会被覆盖。新的一周会沿用上一周的持仓，只换价格，买卖了再进去改数量。折算用这周周日所在月份的月汇率，占比 = 这一行折算后的金额 ÷ 账户市值（含现金）。成本 = 结余页这个账户在这周周日的余额（期初余额 + 之后的交易），较结余盈亏 = 市值 − 成本，它包括现金、已经卖掉的盈亏和汇差，持仓盈亏只算现在拿着、填了成本价的证券。只是看看，不会记成交易</div>
     </div>
+    <dialog id="hd-find">
+      <h2 id="hd-find-title"></h2>
+      <p id="hd-find-msg" class="settings-help"></p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>行情代码</th><th>名称</th><th>交易所</th><th>币种</th><th class="num">价格</th><th></th></tr></thead>
+        <tbody id="hd-find-rows"></tbody>
+      </table></div>
+      <div class="actions"><button class="secondary" id="hd-find-cancel">取消</button><button class="secondary" id="hd-find-manual"></button></div>
+    </dialog>
     <div class="card" id="hd-history-card" hidden>
       <h2>每周记录<span id="hd-history-cur" class="muted"></span></h2>
       <div class="table-wrap"><table class="sheet">

@@ -13,11 +13,18 @@
   converted at the week's rates. Unlike the gain against the balance, it leaves out cash, money
   moved in and out, and gains already realized.
 
+- Prices (see quotes.py): a security with a Yahoo Finance symbol gets its price from there.
+  During the week it is the latest one (price_source "live", refreshed by 「更新」 and when the
+  page is opened); once the week has ended it becomes the close of the week's last trading day
+  ("close") and is never fetched again. A price typed in ("manual") is never overwritten.
+  `sync` does this when the page is opened, and carries the latest snapshot forward into the
+  weeks since (quantities unchanged, prices fetched), so nothing has to be typed in each week.
+
 Weeks run Monday to Sunday and are named by their Monday (2026-11-09).
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
-from . import books
+from . import books, quotes
 from .db import connect, transaction
 from .errors import NotFound
 
@@ -75,7 +82,8 @@ def _account(conn, account_id: int) -> dict:
 
 def _rows(conn, account_id: int, week: str) -> list[dict]:
     return [dict(r) for r in conn.execute(
-        "SELECT p.kind, p.name, p.code, c.name AS currency, p.quantity, p.price, p.unit_cost, p.amount"
+        "SELECT p.kind, p.name, p.code, c.name AS currency, p.quantity, p.price, p.unit_cost, p.amount,"
+        " p.symbol, p.price_source, p.price_at"
         " FROM positions p JOIN currencies c ON c.id = p.currency_id"
         " WHERE p.account_id = ? AND p.week = ? ORDER BY p.pos", (account_id, week))]
 
@@ -163,7 +171,8 @@ def holdings(account_id: int | None = None, week: str | None = None, today: date
     """The 持仓 page for one account and week:
 
     {"accounts": [investment accounts], "currencies": [all, list order], "account": id or None,
-     "week", "this_week", "rows": [{"kind", "name", "code", "currency", "quantity", "price", "unit_cost", "amount"}],
+     "week", "this_week", "rows": [{"kind", "name", "code", "currency", "quantity", "price", "unit_cost", "amount",
+                                    "symbol", "price_source", "price_at"}],
      "filled": whether this week has a snapshot, "copy_from": {"week", "rows"} the latest earlier
      snapshot (to start from when filling this week) or None, "valuation" (see _valuation),
      "history": [{"week", "market_value", "cost", "gain", "ratio", "position_gain", "position_ratio"}]
@@ -200,10 +209,13 @@ def _num(v, what: str) -> float:
         raise ValueError(f"{what}要是数字：{v}") from None
 
 
+SOURCES = ("manual", "live", "close")
+
+
 def save(account_id: int, week: str, rows: list[dict], currency: str | None = None,
          today: date | None = None) -> None:
     """Replace one week's snapshot (no rows: delete it), and set the account's currency if
-    given. All or nothing."""
+    given. All or nothing. A security without a symbol is always priced by hand."""
     week = _check_week(week).isoformat()
     if week > monday(today or date.today()).isoformat():
         raise ValueError("不能填以后的周")
@@ -234,14 +246,162 @@ def save(account_id: int, week: str, rows: list[dict], currency: str | None = No
                 unit_cost = None if unit_cost in (None, "") else _num(unit_cost, f"第 {i} 行的成本价")
                 if unit_cost is not None and unit_cost < 0:
                     raise ValueError(f"第 {i} 行：成本价不能是负数")
-                clean.append((kind, name, code, ids[cur], qty, price, unit_cost, None))
+                symbol = str(r.get("symbol") or "").strip()
+                source = r.get("price_source") or "manual"
+                if source not in SOURCES:
+                    raise ValueError(f"第 {i} 行：不认识的价格来源 {source}")
+                if not symbol:
+                    source = "manual"
+                at = (r.get("price_at") or None) if source != "manual" else None
+                clean.append((kind, name, code, ids[cur], qty, price, unit_cost, None, symbol, source, at))
             else:
-                clean.append((kind, name, code, ids[cur], None, None, None, _num(r.get("amount"), f"第 {i} 行的金额")))
+                clean.append((kind, name, code, ids[cur], None, None, None, _num(r.get("amount"), f"第 {i} 行的金额"),
+                              "", "manual", None))
         conn.execute("DELETE FROM positions WHERE account_id = ? AND week = ?", (account_id, week))
-        conn.executemany(
-            "INSERT INTO positions (account_id, week, pos, kind, name, code, currency_id, quantity, price, unit_cost, amount)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [(account_id, week, i, *row) for i, row in enumerate(clean, 1)])
+        _insert(conn, account_id, week, clean)
+
+
+def _insert(conn, account_id: int, week: str, rows: list[tuple]) -> None:
+    """rows: (kind, name, code, currency_id, quantity, price, unit_cost, amount, symbol, price_source, price_at)"""
+    conn.executemany(
+        "INSERT INTO positions (account_id, week, pos, kind, name, code, currency_id, quantity, price, unit_cost,"
+        " amount, symbol, price_source, price_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [(account_id, week, i, *row) for i, row in enumerate(rows, 1)])
+
+
+# ---------- prices ----------
+
+STALE = timedelta(minutes=30)  # a live price older than this is fetched again when the page is opened
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _sunday(week: str) -> date:
+    return date.fromisoformat(week) + timedelta(days=6)
+
+
+def _fetch_closes(symbols: set[str], weeks: set[str], warnings: list[str]) -> dict:
+    """(symbol, week) -> (price, trading day) for the weeks' Sundays; failures go to warnings."""
+    out = {}
+    for s in sorted(symbols):
+        try:
+            got = quotes.closes(s, [_sunday(w) for w in weeks])["closes"]
+        except quotes.QuoteError as e:
+            warnings.append(f"{s}：{e}")
+            continue
+        for w in weeks:
+            if _sunday(w) in got:
+                out[s, w] = got[_sunday(w)]
+        if not any((s, w) in out for w in weeks):
+            warnings.append(f"{s}：Yahoo Finance 没有这几周的收盘价")
+    return out
+
+
+def _fetch_latest(symbols: set[str], warnings: list[str]) -> dict:
+    """symbol -> (price, at)."""
+    out = {}
+    for s in sorted(symbols):
+        try:
+            q = quotes.latest(s)
+        except quotes.QuoteError as e:
+            warnings.append(f"{s}：{e}")
+            continue
+        if q:
+            out[s] = (q["price"], q["at"] or _now().isoformat(timespec="minutes"))
+        else:
+            warnings.append(f"{s}：Yahoo Finance 没有现价")
+    return out
+
+
+def refresh(account_id: int, today: date | None = None) -> dict:
+    """「更新」: fetch this week's live prices again. {"updated": n, "warnings": [...]}"""
+    this_week = monday(today or date.today()).isoformat()
+    with connect() as conn:
+        _account(conn, account_id)
+        symbols = {r[0] for r in conn.execute(
+            "SELECT symbol FROM positions WHERE account_id = ? AND week = ? AND symbol != '' AND price_source = 'live'",
+            (account_id, this_week))}
+    warnings = []
+    got = _fetch_latest(symbols, warnings)
+    with transaction() as conn:
+        for s, (price, at) in got.items():
+            conn.execute("UPDATE positions SET price = ?, price_at = ? WHERE account_id = ? AND week = ?"
+                         " AND symbol = ? AND price_source = 'live'", (price, at, account_id, this_week, s))
+    return {"updated": len(got), "warnings": warnings}
+
+
+def sync(account_id: int, today: date | None = None) -> dict:
+    """When the page is opened: (1) the ended weeks' live prices become the week's close (final);
+    (2) the latest snapshot is carried forward into each week since, up to this one (rows with a
+    symbol get that week's price; typed-in prices are copied); (3) this week's live prices older
+    than STALE are fetched again. {"changed": bool, "warnings": [...]}. A price that can't be had
+    stays as it was (still "live") and is tried again next time."""
+    this_week = monday(today or date.today()).isoformat()
+    with connect() as conn:
+        _account(conn, account_id)
+        weeks = _weeks(conn, account_id)
+        pending = [dict(r) for r in conn.execute(
+            "SELECT week, pos, symbol, price_at FROM positions WHERE account_id = ? AND kind = 'security'"
+            " AND symbol != '' AND price_source = 'live'", (account_id,))]
+        carry_from = next((w for w in weeks if w < this_week), None) if this_week not in weeks else None
+        base = _rows(conn, account_id, carry_from) if carry_from else []
+        cur_ids = {r[0]: r[1] for r in conn.execute("SELECT name, id FROM currencies")}
+    new_weeks = []
+    if carry_from:
+        w = date.fromisoformat(carry_from) + timedelta(days=7)
+        while w.isoformat() <= this_week:
+            new_weeks.append(w.isoformat())
+            w += timedelta(days=7)
+    carried_symbols = {r["symbol"] for r in base if r["kind"] == "security" and r["symbol"]}
+
+    warnings = []
+    ended = {p["week"] for p in pending if p["week"] < this_week} | {w for w in new_weeks if w < this_week}
+    close_symbols = {p["symbol"] for p in pending if p["week"] < this_week} | (carried_symbols if ended else set())
+    closes = _fetch_closes(close_symbols, ended, warnings) if close_symbols else {}
+    cutoff = (_now() - STALE).isoformat(timespec="minutes")
+    live_symbols = {p["symbol"] for p in pending if p["week"] == this_week and (p["price_at"] or "") < cutoff}
+    if this_week in new_weeks:
+        live_symbols |= carried_symbols
+    live = _fetch_latest(live_symbols, warnings) if live_symbols else {}
+
+    changed = False
+    with transaction() as conn:
+        for p in pending:
+            if p["week"] < this_week and (p["symbol"], p["week"]) in closes:
+                price, day = closes[p["symbol"], p["week"]]
+                conn.execute("UPDATE positions SET price = ?, price_source = 'close', price_at = ?"
+                             " WHERE account_id = ? AND week = ? AND pos = ?", (price, day, account_id, p["week"], p["pos"]))
+                changed = True
+            elif p["week"] == this_week and p["symbol"] in live:
+                price, at = live[p["symbol"]]
+                conn.execute("UPDATE positions SET price = ?, price_at = ? WHERE account_id = ? AND week = ? AND pos = ?",
+                             (price, at, account_id, p["week"], p["pos"]))
+                changed = True
+        for w in new_weeks:
+            if conn.execute("SELECT 1 FROM positions WHERE account_id = ? AND week = ?", (account_id, w)).fetchone():
+                continue  # saved meanwhile
+            rows = []
+            for r in base:
+                price, source, at = r["price"], r["price_source"], r["price_at"]
+                if r["kind"] == "security" and r["symbol"]:
+                    got = closes.get((r["symbol"], w)) if w < this_week else live.get(r["symbol"])
+                    # not had: the last price, still live so it is tried again
+                    price, source, at = (got[0], "close" if w < this_week else "live", got[1]) if got else (price, "live", None)
+                rows.append((r["kind"], r["name"], r["code"], cur_ids[r["currency"]], r["quantity"], price,
+                             r["unit_cost"], r["amount"], r["symbol"], source, at))
+            _insert(conn, account_id, w, rows)
+            changed = True
+    return {"changed": changed, "warnings": warnings}
+
+
+def lookup(code: str, week: str, today: date | None = None) -> list[dict]:
+    """Candidates for a code, priced for the week (see quotes.lookup)."""
+    week = _check_week(week).isoformat()
+    with connect() as conn:
+        names = [r[0] for r in conn.execute("SELECT name FROM currencies ORDER BY sort, id")]
+    return quotes.lookup(code.strip(), week, monday(today or date.today()).isoformat(), names)
 
 
 def at_month_end(month: str) -> dict[str, dict]:

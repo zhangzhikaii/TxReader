@@ -265,4 +265,9 @@ table.sheet a.valued:hover { text-decoration:underline; }
 .hero .gain-line { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 16px; }
 .hero .gain-line .name { font-weight:600; color:var(--text); min-width:72px; }
 #hd-rows td .pct { display:block; font-size:12px; }
+#hd-rows .price-note, #hd-find .price-note { display:block; font-size:12px; color:var(--muted); white-space:nowrap; }
+#hd-find .price-note.warn { color:#b45309; }
+#hd-rows .hd-code { display:flex; align-items:center; gap:2px; }
+#hd-rows .hd-code button.icon { line-height:0; padding:4px; }
+.hd-link { background:none; padding:0; font-size:12px; color:var(--accent); text-decoration:underline; }
 #hd-rows td .unit { font-size:12px; color:var(--muted); margin-left:3px; }

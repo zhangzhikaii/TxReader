@@ -746,6 +746,85 @@ def test_holdings(client):
     assert portfolio.holdings(acc, week, today=date(2026, 11, 12))["history"] == []
 
 
+def test_holdings_prices(client, monkeypatch):
+    """Prices from Yahoo Finance (faked): ended weeks get their close once, the latest snapshot is
+    carried forward, this week's live prices are refreshed, typed-in prices are left alone."""
+    from datetime import date
+    from txreader import portfolio, quotes
+    calls = []
+    price = {"live": 12.5}
+
+    def fake_closes(symbol, days):
+        calls.append(("closes", symbol))
+        return {"currency": "USD", "closes": {d: (float(d.day), d.isoformat()) for d in days}}
+
+    def fake_latest(symbol):
+        calls.append(("latest", symbol))
+        return {"symbol": symbol, "name": "某某公司", "currency": "USD", "price": price["live"], "at": "2026-11-12T06:00+00:00"}
+    monkeypatch.setattr(quotes, "closes", fake_closes)
+    monkeypatch.setattr(quotes, "latest", fake_latest)
+    today = date(2026, 11, 12)  # this week: 2026-11-09
+    monkeypatch.setattr(portfolio, "_now", lambda: portfolio.datetime(2026, 11, 12, 6, 10, tzinfo=portfolio.timezone.utc))
+
+    client.post("/api/transactions", json={"add_accounts": True, "rows": [
+        {"date": "2026/10/05 10:00:00", "account": "证券", "currency": "美元", "amount": 1000,
+         "category": "内部转账", "description": ""}]})
+    acc = next(a["id"] for a in client.get("/api/settings").json()["accounts"] if a["name"] == "证券")
+    client.post("/api/settings/batch", json={"ops": [{"op": "set_type", "kind": "accounts", "id": acc, "type": "invest"}]})
+    rows = [{"kind": "security", "name": "某某公司", "code": "AAA", "symbol": "AAA", "price_source": "live",
+             "currency": "美元", "quantity": 10, "price": 9},
+            {"kind": "security", "name": "某某基金", "code": "0001", "currency": "美元", "quantity": 1, "price": 100,
+             "symbol": "", "price_source": "live"},  # no symbol: always typed in
+            {"kind": "cash", "currency": "美元", "amount": 50}]
+    assert client.put("/api/holdings", json={"account_id": acc, "week": "2026-10-26", "rows": rows}).is_success
+    assert [r["price_source"] for r in portfolio.holdings(acc, "2026-10-26", today=today)["rows"]] == ["live", "manual", "manual"]
+
+    out = portfolio.sync(acc, today=today)
+    assert out == {"changed": True, "warnings": []}
+    got = lambda w: [(r["price"], r["price_source"], r["price_at"]) for r in portfolio.holdings(acc, w, today=today)["rows"]]
+    # 10/26's week ended on 11/01 (faked close = the day of the month); 11/02 carried with its close;
+    # this week carried with the live price; the fund keeps its typed-in price
+    assert got("2026-10-26")[:2] == [(1.0, "close", "2026-11-01"), (100, "manual", None)]
+    assert got("2026-11-02")[:2] == [(8.0, "close", "2026-11-08"), (100, "manual", None)]
+    assert got("2026-11-09")[:2] == [(12.5, "live", "2026-11-12T06:00+00:00"), (100, "manual", None)]
+    assert len(got("2026-11-09")) == 3
+
+    # Opened again: nothing is fetched (closes are final, the live price is fresh)
+    calls.clear()
+    assert portfolio.sync(acc, today=today) == {"changed": False, "warnings": []} and calls == []
+    # 「更新」 fetches the live price again
+    price["live"] = 13
+    assert client.post("/api/holdings/refresh", json={"account_id": acc}).status_code == 200  # (real date; nothing there)
+    assert portfolio.refresh(acc, today=today) == {"updated": 1, "warnings": []}
+    assert got("2026-11-09")[0][0] == 13
+    # Next week: this week's live price becomes its close, and the carry goes on
+    assert portfolio.sync(acc, today=date(2026, 11, 17))["changed"]
+    assert got("2026-11-09")[0] == (15.0, "close", "2026-11-15")
+    assert portfolio.holdings(acc, "2026-11-16", today=date(2026, 11, 17))["rows"][0]["price_source"] == "live"
+
+    # Yahoo Finance down: the price stays as it was, still live, a warning says why
+    def down(*a):
+        raise quotes.QuoteError("连不上 Yahoo Finance")
+    monkeypatch.setattr(quotes, "closes", down)
+    out = portfolio.sync(acc, today=date(2026, 11, 24))
+    assert out["warnings"] and portfolio.holdings(acc, "2026-11-16", today=date(2026, 11, 24))["rows"][0]["price_source"] == "live"
+
+    # Lookup: the candidates with their price and the currency's name in the list
+    monkeypatch.setattr(quotes, "search", lambda code: [{"symbol": "AAA", "name": "某某公司", "exchange": "NASDAQ", "type": "Equity"}])
+    monkeypatch.setattr(quotes, "price_for", lambda s, w, t: {"price": 7, "currency": "USD", "source": "close", "at": "2026-11-06"})
+    found = client.get("/api/holdings/lookup?code=AAA&week=2026-11-02").json()["candidates"]
+    assert found == [{"symbol": "AAA", "name": "某某公司", "exchange": "NASDAQ", "type": "Equity", "price": 7,
+                      "currency": "USD", "source": "close", "at": "2026-11-06", "currency_name": "美元"}]
+    assert client.get("/api/holdings/lookup?code=%20&week=2026-11-02").status_code == 400
+    # The search down (it often is): the code tried as a symbol; both down: 502
+    monkeypatch.setattr(quotes, "search", down)
+    monkeypatch.setattr(quotes, "latest", lambda s: {"symbol": s, "name": "某某公司", "currency": "USD", "price": 7, "at": None})
+    assert [c["symbol"] for c in client.get("/api/holdings/lookup?code=aaa&week=2026-11-02").json()["candidates"]] == ["AAA"]
+    assert quotes.guesses("7203") == ["7203", "7203.T", "7203.HK"] and quotes.guesses("600519")[1] == "600519.SS"
+    monkeypatch.setattr(quotes, "price_for", down)
+    assert client.get("/api/holdings/lookup?code=AAA&week=2026-11-02").status_code == 502
+
+
 def test_account_in_a_pending_row_cant_be_deleted(client):
     acc = client.post("/api/settings/accounts", json={"name": "某银行"}).json()["id"]
     row = upload(client, b"shot1")["pending"][0]

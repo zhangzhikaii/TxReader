@@ -166,6 +166,9 @@ CREATE TABLE IF NOT EXISTS positions (
     price       REAL,                   -- security only, per unit, in its currency
     unit_cost   REAL,                   -- security only, optional: what one unit cost on average
     amount      REAL,                   -- cash only
+    symbol      TEXT NOT NULL DEFAULT '',        -- security only: its Yahoo Finance symbol ('' = none, price typed in)
+    price_source TEXT NOT NULL DEFAULT 'manual', -- manual (typed in) / live (latest, this week) / close (the week's last close, final)
+    price_at    TEXT,                   -- live: when (UTC, ISO); close: the trading day
     PRIMARY KEY (account_id, week, pos)
 );
 
@@ -265,8 +268,13 @@ def _migrate(conn) -> None:
     if "value_currency_id" not in cols:  # and then the currency 持仓 values an investment account in
         conn.execute("ALTER TABLE accounts ADD COLUMN value_currency_id INTEGER REFERENCES currencies(id)")
     # Securities in 持仓 gained what they cost (per unit)
-    if "unit_cost" not in {r["name"] for r in conn.execute("PRAGMA table_info(positions)")}:
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(positions)")}
+    if "unit_cost" not in cols:
         conn.execute("ALTER TABLE positions ADD COLUMN unit_cost REAL")
+    if "symbol" not in cols:  # and then prices from Yahoo Finance; what was there was typed in
+        conn.execute("ALTER TABLE positions ADD COLUMN symbol TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE positions ADD COLUMN price_source TEXT NOT NULL DEFAULT 'manual'")
+        conn.execute("ALTER TABLE positions ADD COLUMN price_at TEXT")
 
     # The lists started out empty: fill them once from the transactions so far
     if not conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():

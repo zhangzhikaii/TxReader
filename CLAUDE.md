@@ -1,6 +1,6 @@
 # TxReader
 
-用户自己用的记账网页：上传手机 App 的交易截图（OCR 识别）或从 Outlook 读通知邮件，核对、修改后入库；也可以手动输入；有月度收支、账户结余与汇差，能导出 CSV。截图识别完全在本地（RapidOCR）；只有邮件导入会联网（Microsoft Graph，用户点「从邮件更新」时才读）。用户用中文交流。
+用户自己用的记账网页：上传手机 App 的交易截图（OCR 识别）或从 Outlook 读通知邮件，核对、修改后入库；也可以手动输入；有月度收支、账户结余与汇差，能导出 CSV。截图识别完全在本地（RapidOCR）。联网的只有两处：邮件导入（Microsoft Graph，用户点「从邮件更新」时才读）和持仓页的证券价格（Yahoo Finance，只发证券代码 / 行情代码，不发数量、金额；打开持仓页、点「更新价格」或查找代码时才取）。用户用中文交流。
 
 运行、CSV 格式、各来源的说明见 `README.md`。当前计划见 `docs/plan.md`（设置页、期初余额与月汇率、账户结余、月度收支、邮件导入、部署），做完一步就在上面打勾，决定有变就更新它。月度收支表参照 `docs/example.csv`，账户结余表参照 `docs/example2.csv`（用户自己写的，里面是真实数字：只看结构，不要把数字抄进代码、测试或文档，也不要提交）。
 
@@ -15,7 +15,8 @@ txreader/store.py         识别入库流程、待核对行、确认入库、手
 txreader/lists.py         账户 / 币种 / 种类清单：输入时的提示（`offered`）、找出新名称（`unknown`）、设置页的增删改排序（`apply`：一批改动一起保存）
 txreader/devtools.py      开发用命令：`python -m txreader.devtools clear`（删除所有交易，要输入 yes）、`seed <file>`（从 seed/ 导入 CSV 并登记清单）
 txreader/books.py         期初余额（起始月 + 账户 × 币种）、月汇率（1 外币 = 多少本位币，手填）、账户结余（`balances`：月底结余、折算、汇差、月度差额、按账户类型的小计 `groups`）；月度收支（`monthly`：种类 × 币种、折算、汇差、和结余页核对；`year=` 时把一年各月加起来）；每月对比（`trend`：各种类最近几个月逐月的数字，页面上选要比的种类）
-txreader/portfolio.py     持仓：投资账户（类型「投资」）每周一份的持仓快照（`positions`，周一的日期为名；证券 = 数量 × 现价，现金可为任何币种），按账户自己的币种（`accounts.value_currency_id`）用月汇率折算出市值；成本 = 那周周日的结余（`books._holdings_on`），算出盈亏和比例；证券可填成本价（`unit_cost`，每单位），另算持仓盈亏（只算填了成本价的证券）；结余页显示月底前最近一次的市值（`at_month_end`）。只是看看，不记成交易
+txreader/portfolio.py     持仓：投资账户（类型「投资」）每周一份的持仓快照（`positions`，周一的日期为名；证券 = 数量 × 现价，现金可为任何币种），按账户自己的币种（`accounts.value_currency_id`）用月汇率折算出市值；成本 = 那周周日的结余（`books._holdings_on`），算出盈亏和比例；证券可填成本价（`unit_cost`，每单位），另算持仓盈亏（只算填了成本价的证券）；结余页显示月底前最近一次的市值（`at_month_end`）。有行情代码（`symbol`）的证券自动取价（`price_source`：manual 手填 / live 这周的最新价 / close 周结束后的收盘价，定下来不再取）：`sync`（打开页面时：结束的周换成收盘价、把最近一份持仓沿用到之后各周、过时的最新价重取）、`refresh`（「更新价格」）、`lookup`（查找代码）。只是看看，不记成交易
+txreader/quotes.py        Yahoo Finance 公开接口（无 key、非官方）：`search`、`latest`、`closes`（某天或之前最后一个交易日的收盘价）、ISO 币种 -> 清单里的币种名（`currency_name`）
 txreader/matching.py      新识别的行与库里已有行比对（跳过 / 合并 / 疑似重复 / 新增）
 txreader/mail.py          邮件导入：Outlook OAuth（Client ID / secret / 令牌存在 config 表）、邮件规则（`email_rules`：发件人、标题、三个正则）、读取上次之后的邮件（`fetch`）、识别、重新识别没认出来的
 txreader/auth.py          单用户密码登录、会话（闲置超时 + 30 天上限）、登录记录、错误次数锁定；`python -m txreader.auth` 生成密码哈希（填到 `.env`）
@@ -40,7 +41,7 @@ static/js/                前端脚本，原生 JS、无构建步骤；普通 <s
   manual.js               手动输入、确认框；loadSuggestions（清单提示，别的页面也用）
   email-import.js         从邮件更新、没认出来的邮件
   transactions.js / monthly.js / balances.js / security.js   各自的页面（交易页：周期切换 + 高级筛选、「导出 CSV」导出当前筛选出的交易、和设置页一样上锁 / 统一保存（`txEdit`，`PATCH /api/transactions`）；收支页点种类跳到交易页（`txPreset`））
-  holdings.js             持仓页：选账户、按周切换（‹ › / 本周）、上锁 / 统一保存（`hdEdit`，`PUT /api/holdings` 整周替换）；没填的周从上一次的持仓开始填；列顺序（`HD_COLS` / `hdOrder`，「⇄ 列顺序」）和按某列排序证券（表头的排序箭头，`hdSort`，只在只读时，现金排在最后）存在 localStorage，不上锁
+  holdings.js             持仓页：选账户、按周切换（‹ › / 本周）、上锁 / 统一保存（`hdEdit`，`PUT /api/holdings` 整周替换）；没填的周从上一次的持仓开始填；进页面时每个账户 `hdSync` 一次（`hdSynced`），「⟳ 更新价格」，代码旁的放大镜 / 新证券保存前用 `hdFind` 弹框在 Yahoo Finance 查找确认；列顺序（`HD_COLS` / `hdOrder`，「⇄ 列顺序」）和按某列排序证券（表头的排序箭头，`hdSort`，只在只读时，现金排在最后）存在 localStorage，不上锁
   trend.js                收支页的标签切换（本月 / 每月对比）和每月对比表（默认显示设置里标为「固定」的种类，其余自己加）；点格子跳到交易页（`txPreset`）
   settings.js             设置页标签、上锁 / 统一保存（`lockable`）、账户 / 币种 / 种类清单（拖动排序）
   opening.js / rates.js / email-settings.js                              设置里的期初余额、月汇率、邮件
@@ -50,6 +51,7 @@ tests/test_logic.py       去重、日期推断、比对规则等纯逻辑测试
 tests/test_api.py         接口全流程测试（假识别结果 + 临时数据目录）
 tests/test_devtools.py    开发用命令的测试
 tests/test_email.py       邮件导入全流程测试（假的微软服务器：`mail._token_call` / `mail._messages`）
+（测试不联网：持仓价格的测试替换掉 `quotes.latest` / `quotes.closes` / `quotes.search`）
 tests/test_samples.py     用 samples/ 里的真实截图对照期望结果（没有 samples/ 时自动跳过）
 ```
 

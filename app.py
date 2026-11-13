@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 # Settings come from .env (see .env.example); variables already set in the environment win
 load_dotenv(Path(__file__).parent / ".env")
 
-from txreader import auth, errors, lists, mail  # noqa: E402
+from txreader import auth, errors, lists, mail, quotes  # noqa: E402
 from txreader.routes import books, email, holdings, pages, review, settings, transactions  # noqa: E402
 
 app = FastAPI(title="TxReader")
@@ -54,6 +54,7 @@ def _detail(status: int):
 
 app.add_exception_handler(ValueError, _detail(400))      # something the user can fix
 app.add_exception_handler(mail.MailError, _detail(400))  # settings, sign-in, the mail server
+app.add_exception_handler(quotes.QuoteError, _detail(502))  # Yahoo Finance (持仓 prices)
 app.add_exception_handler(auth.LoginError, _detail(401))
 
 
