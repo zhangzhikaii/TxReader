@@ -277,11 +277,11 @@
   <section id="view-holdings" hidden>
     <div class="card month-bar">
       <select id="hd-account" aria-label="账户"></select>
-      <button class="secondary" id="hd-prev" title="上一周">‹</button>
-      <span id="hd-week" class="week-label"></span>
-      <button class="secondary" id="hd-next" title="下一周">›</button>
-      <button class="secondary" id="hd-today">本周</button>
-      <button class="secondary" id="hd-refresh" title="从 Yahoo Finance 取这周的最新价格" hidden>⟳ 更新价格</button>
+      <button class="secondary" id="hd-prev" title="前一天">‹</button>
+      <input type="date" id="hd-day" aria-label="日期">
+      <button class="secondary" id="hd-next" title="后一天">›</button>
+      <button class="secondary" id="hd-today">今天</button>
+      <button class="secondary" id="hd-refresh" title="从 Yahoo Finance 再取一次价格和汇率" hidden>⟳ 更新价格</button>
       <span id="hd-status" class="status"></span>
     </div>
     <div id="hd-warn"></div>
@@ -296,7 +296,7 @@
         <tbody id="hd-rows"></tbody>
       </table></div>
       <div class="add-row" id="hd-add" hidden><button class="secondary" data-hd-add="security">＋ 证券</button><button class="secondary" data-hd-add="cash">＋ 现金</button></div>
-      <div class="legend">每周填一次。证券的金额 = 数量 × 现价；成本价是每单位的平均成本（可不填），持仓盈亏 = 金额 − 数量 × 成本价，「原币」是证券自己的币种，「折算」按账户的币种；现金可以是任何币种。有行情代码的证券从 Yahoo Finance 取价格（只把代码发出去）：这周内是最新价，可以点「更新价格」；这周结束后换成这周最后一个交易日的收盘价，以后不再改；自己改过的价格（手填）不会被覆盖。新的一周会沿用上一周的持仓，只换价格，买卖了再进去改数量。折算用这周周日所在月份的月汇率，占比 = 这一行折算后的金额 ÷ 账户市值（含现金）。成本 = 结余页这个账户在这周周日的余额（期初余额 + 之后的交易），较结余盈亏 = 市值 − 成本，它包括现金、已经卖掉的盈亏和汇差，持仓盈亏只算现在拿着、填了成本价的证券。只是看看，不会记成交易</div>
+      <div class="legend">持仓只在变动（买卖、分红、转入转出）时填：选好那天点「修改」，保存后从那天起都是这份持仓，直到下一次变动。证券的金额 = 数量 × 现价；成本价是每单位的平均成本（可不填），持仓盈亏 = 金额 − 数量 × 成本价，「原币」是证券自己的币种，「折算」按账户的币种；现金可以是任何币种。有行情代码的证券每天的价格从 Yahoo Finance 自动取（只把代码发出去）：过去的日子是那天（周末、节假日是前一个交易日）的收盘价，今天是最新价，可以点「更新价格」；没有行情代码的证券手填价格，一直用到下一次变动。折算用那天的汇率（有代码的币种从 Yahoo Finance 取，没有的用月汇率），占比 = 这一行折算后的金额 ÷ 账户市值（含现金）。成本 = 结余页这个账户在那天结束时的余额（期初余额 + 之后的交易），较结余盈亏 = 市值 − 成本，它包括现金、已经卖掉的盈亏和汇差，持仓盈亏只算现在拿着、填了成本价的证券。只是看看，不会记成交易</div>
     </div>
     <dialog id="hd-find">
       <h2 id="hd-find-title"></h2>
@@ -308,11 +308,13 @@
       <div class="actions"><button class="secondary" id="hd-find-cancel">取消</button><button class="secondary" id="hd-find-manual"></button></div>
     </dialog>
     <div class="card" id="hd-history-card" hidden>
-      <h2>每周记录<span id="hd-history-cur" class="muted"></span></h2>
+      <h2>每日变化<span id="hd-history-cur" class="muted"></span></h2>
+      <div id="hd-chart" class="hd-chart"></div>
       <div class="table-wrap"><table class="sheet">
-        <thead><tr><th>周</th><th class="num">市值</th><th class="num">成本（结余）</th><th class="num">较结余盈亏</th><th class="num">比例</th><th class="num">持仓盈亏</th><th class="num">比例</th></tr></thead>
+        <thead><tr><th>日期</th><th class="num">市值</th><th class="num">当日变化</th><th class="num">成本（结余）</th><th class="num">较结余盈亏</th><th class="num">比例</th><th class="num">持仓盈亏</th><th class="num">比例</th></tr></thead>
         <tbody id="hd-history"></tbody>
       </table></div>
+      <div class="add-row"><button class="secondary" id="hd-history-more" hidden></button></div>
     </div>
   </section>
 

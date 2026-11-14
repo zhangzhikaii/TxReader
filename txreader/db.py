@@ -155,24 +155,38 @@ CREATE TABLE IF NOT EXISTS fx_rates (
     PRIMARY KEY (month, currency_id)
 );
 
--- What an investment account held, one snapshot a week (持仓; see txreader/portfolio.py).
--- week = that week's Monday (2026-11-09). A security is quantity x price; cash is an amount.
+-- What an investment account held (持仓; see txreader/portfolio.py): typed in only when it changes.
+-- A snapshot is the whole table on `day` and holds until the next day with one.
+-- A security is quantity x price; cash is an amount.
 CREATE TABLE IF NOT EXISTS positions (
     account_id  INTEGER NOT NULL REFERENCES accounts(id),
-    week        TEXT NOT NULL,
+    day         TEXT NOT NULL,          -- 2026-11-14
     pos         INTEGER NOT NULL,       -- order in the table
     kind        TEXT NOT NULL CHECK (kind IN ('security', 'cash')),
     name        TEXT NOT NULL DEFAULT '',
     code        TEXT NOT NULL DEFAULT '',
     currency_id INTEGER NOT NULL REFERENCES currencies(id),
     quantity    REAL,                   -- security only
-    price       REAL,                   -- security only, per unit, in its currency
+    price       REAL,                   -- security only, per unit, in its currency: typed in, or (with a symbol) the price when saved
     unit_cost   REAL,                   -- security only, optional: what one unit cost on average
     amount      REAL,                   -- cash only
-    symbol      TEXT NOT NULL DEFAULT '',        -- security only: its Yahoo Finance symbol ('' = none, price typed in)
-    price_source TEXT NOT NULL DEFAULT 'manual', -- manual (typed in) / live (latest, this week) / close (the week's last close, final)
-    price_at    TEXT,                   -- live: when (UTC, ISO); close: the trading day
-    PRIMARY KEY (account_id, week, pos)
+    symbol      TEXT NOT NULL DEFAULT '',  -- security only: its Yahoo Finance symbol ('' = none, price typed in)
+    PRIMARY KEY (account_id, day, pos)
+);
+
+-- Daily closes from Yahoo Finance, of securities (7203.T) and exchange rates (JPYCNY=X) alike
+CREATE TABLE IF NOT EXISTS prices (
+    symbol      TEXT NOT NULL,
+    day         TEXT NOT NULL,          -- the trading day, in the exchange's time zone
+    close       REAL NOT NULL,          -- in the major unit (pence turned into pounds)
+    at          TEXT,                   -- the last bar of a fetch (the latest price): when it was (UTC, ISO)
+    PRIMARY KEY (symbol, day)
+);
+-- When each symbol was last fetched, and from which day on its bars are there
+CREATE TABLE IF NOT EXISTS price_fetches (
+    symbol      TEXT PRIMARY KEY,
+    start       TEXT NOT NULL,
+    fetched_at  TEXT NOT NULL           -- UTC, ISO
 );
 
 CREATE TABLE IF NOT EXISTS login_events (
@@ -220,6 +234,29 @@ def _rebuild(conn, table: str, kept: str, indexes: str = "") -> None:
         f" INSERT INTO {table}_new ({kept}) SELECT {kept} FROM {table};"
         f" DROP TABLE {table}; ALTER TABLE {table}_new RENAME TO {table}; {indexes} COMMIT;")
     conn.execute("PRAGMA foreign_keys = ON")
+
+
+def _positions_by_day(conn) -> None:
+    """持仓 went from one snapshot a week to one whenever it changes: a week's snapshot becomes
+    one on its Monday, and one the same as the snapshot before it (carried forward week after
+    week) is dropped. Prices typed over a symbol's are no longer kept apart (the symbol wins)."""
+    old = [dict(r) for r in conn.execute("SELECT * FROM positions ORDER BY account_id, week, pos")]
+    snaps: dict[tuple[int, str], list[dict]] = {}
+    for r in old:
+        snaps.setdefault((r["account_id"], r["week"]), []).append(r)
+    same = lambda rows: [(r["kind"], r["name"], r["code"], r["currency_id"], r["quantity"], r["unit_cost"], r["amount"],
+                          r["symbol"], None if r["symbol"] else r["price"]) for r in rows]
+    kept, last = [], {}
+    for (acc, week), rows in snaps.items():
+        if last.get(acc) != same(rows):
+            kept += [(acc, week, r["pos"], r["kind"], r["name"], r["code"], r["currency_id"], r["quantity"], r["price"],
+                      r["unit_cost"], r["amount"], r["symbol"]) for r in rows]
+        last[acc] = same(rows)
+    conn.execute("DROP TABLE positions")
+    create = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS positions ("):]
+    conn.execute(create[:create.index(");") + 1])
+    conn.executemany("INSERT INTO positions (account_id, day, pos, kind, name, code, currency_id, quantity, price,"
+                     " unit_cost, amount, symbol) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", kept)
 
 
 def _migrate(conn) -> None:
@@ -287,6 +324,8 @@ def _migrate(conn) -> None:
         conn.execute("ALTER TABLE positions ADD COLUMN symbol TEXT NOT NULL DEFAULT ''")
         conn.execute("ALTER TABLE positions ADD COLUMN price_source TEXT NOT NULL DEFAULT 'manual'")
         conn.execute("ALTER TABLE positions ADD COLUMN price_at TEXT")
+    if "week" in cols:  # and then by day instead of by week
+        _positions_by_day(conn)
 
     # The lists started out empty: fill them once from the transactions so far
     if not conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():

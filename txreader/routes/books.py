@@ -98,7 +98,7 @@ def set_rate(month: str, currency: str, body: RateBody):
 @router.get("/api/balances")
 def balance_sheet(month: str | None = None):
     """Month-end balances of every account and currency, converted to the base currency; with
-    the investment accounts' latest 持仓 valuation by then (account name -> see portfolio.at_month_end)."""
+    the investment accounts' 持仓 valued at the month's end (account name -> see portfolio.at_month_end)."""
     out = books.balances(month)
     out["valuations"] = portfolio.at_month_end(out["month"]) if out["month"] else {}
     return out

@@ -6,7 +6,8 @@ Only a symbol or the code typed in goes out, never quantities or amounts, and on
 - `search(code)`: candidate symbols for a code or name ("7203" -> 7203.T, 7203.SR ...)
 - `latest(symbol)`: the latest price (during a session: the current one) and its time
 - `closes(symbol, days)`: for each day, the close of the last trading day on or before it
-- `price_for(symbol, week, this_week)`: this week -> latest; an ended week -> the close on its Sunday
+- `daily(symbol, start)`: every day's close from `start` to now in one call; the last is the latest price
+- `price_for(symbol, day, today)`: today -> latest; an earlier day -> its close
 - `fx_symbol(code, base)`: the symbol of an exchange rate (JPY, CNY -> JPYCNY=X; see fx.py)
 - `each(fn, items)`: fn over items side by side (one call per symbol, so many symbols take as
   long as the slowest one rather than all of them added up)
@@ -148,17 +149,38 @@ def closes(symbol: str, days: list[date], digits: int | None = 4) -> dict:
     return {"currency": _major(raw, 0)[0], "closes": out}
 
 
-def price_for(symbol: str, week: str, this_week: str) -> dict | None:
-    """{"price", "currency", "source": "live" | "close", "at"} for a week's snapshot, or None."""
-    if week >= this_week:
+def daily(symbol: str, start: date, digits: int | None = 4) -> dict | None:
+    """{"currency", "bars": [(trading day "2026-11-13", close)] oldest first, "at": when the last
+    one was (UTC, ISO)}, or None for an unknown symbol. From a week before `start` (so a day after a
+    weekend has the Friday before it) to now; during a session the last bar is the latest price."""
+    res = _chart(symbol, period1=_epoch(start - timedelta(days=7)), period2=int(time.time()) + 86400, interval="1d")
+    if not res:
+        return None
+    meta = res.get("meta") or {}
+    off = meta.get("gmtoffset") or 0
+    local = lambda t: datetime.fromtimestamp(t + off, timezone.utc).date().isoformat()
+    quote = ((res.get("indicators") or {}).get("quote") or [{}])[0]
+    bars = {local(t): c for t, c in zip(res.get("timestamp") or [], quote.get("close") or []) if c is not None}
+    price, at = meta.get("regularMarketPrice"), meta.get("regularMarketTime")
+    if price is not None and at and local(at) not in bars and (not bars or local(at) > max(bars)):
+        bars[local(at)] = price  # the latest price, before the day's bar shows up
+    currency = _major(meta.get("currency"), 0)[0]
+    return {"currency": currency,
+            "bars": [(d, _round(_major(meta.get("currency"), bars[d])[1], digits)) for d in sorted(bars)],
+            "at": datetime.fromtimestamp(at, timezone.utc).isoformat(timespec="minutes") if at else None}
+
+
+def price_for(symbol: str, day: str, today: str) -> dict | None:
+    """{"price", "currency", "source": "live" | "close", "at"} on a day ("2026-11-14"), or None."""
+    if day >= today:
         q = latest(symbol)
         return q and {"price": q["price"], "currency": q["currency"], "source": "live", "at": q["at"]}
-    sunday = date.fromisoformat(week) + timedelta(days=6)
-    c = closes(symbol, [sunday])
-    if sunday not in c["closes"]:
+    d = date.fromisoformat(day)
+    c = closes(symbol, [d])
+    if d not in c["closes"]:
         return None
-    price, day = c["closes"][sunday]
-    return {"price": price, "currency": c["currency"], "source": "close", "at": day}
+    price, trading = c["closes"][d]
+    return {"price": price, "currency": c["currency"], "source": "close", "at": trading}
 
 
 def guesses(code: str) -> list[str]:
@@ -179,15 +201,15 @@ def guesses(code: str) -> list[str]:
     return out
 
 
-def lookup(code: str, week: str, this_week: str, names: dict[str, str], limit: int = 5) -> list[dict]:
-    """Candidates for a code with their price for the week: [{"symbol", "name", "exchange", "type",
+def lookup(code: str, day: str, today: str, names: dict[str, str], limit: int = 5) -> list[dict]:
+    """Candidates for a code with their price on the day: [{"symbol", "name", "exchange", "type",
     "currency" (ISO), "currency_name" (`names`: ISO code -> name in the list; or None), "price", "source", "at"}]; the ones
     without a price are left out. The search (often slow) and the guesses run side by side; the
     guesses with an exchange (7203.T, 0700.HK) come first, as the search ranks numbers poorly
     ("00700" finds a Taiwan fund, not Tencent), then the search's, then the code itself if nothing else."""
     def priced(c):
         try:
-            p = price_for(c["symbol"], week, this_week)
+            p = price_for(c["symbol"], day, today)
             if p and not c["name"]:
                 q = latest(c["symbol"])
                 c = c | {"name": q["name"] if q else c["symbol"]}

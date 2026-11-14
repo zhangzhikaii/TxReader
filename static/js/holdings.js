@@ -1,7 +1,9 @@
-// 「持仓」: what each investment account holds, one snapshot a week, its market value against the
-// balance sheet's balance (the cost). Read-only until 「✎ 修改」; 「保存」 saves the whole week at once.
-// Securities with a Yahoo Finance symbol are priced from there (see portfolio.py): opening an account
-// syncs it once per visit, 「更新价格」 fetches this week's again, 🔍 looks a code up.
+// 「持仓」: what each investment account holds on a day (the latest snapshot on or before it; typed
+// in only when it changes), its market value against the balance sheet's balance (the cost), and
+// every day's values since the first snapshot (chart and table). Read-only until 「✎ 修改」;
+// 「保存」 saves the whole table from the chosen day on. Securities with a Yahoo Finance symbol are
+// priced from there day by day (see portfolio.py): opening an account syncs it once per visit,
+// 「更新价格」 fetches again, 🔍 looks a code up.
 
 let hd = null;      // the server's page (GET /api/holdings)
 let hdEdit = null;  // while editing: { currency, rows: [{ kind, name, code, currency, quantity, price, unit_cost, amount,
@@ -9,31 +11,30 @@ let hdEdit = null;  // while editing: { currency, rows: [{ kind, name, code, cur
 let hdSynced = new Set(); // accounts whose prices were synced this visit (main.js clears it)
 let hdPriceMsg = "";      // what the last price fetch said
 let hdLockMsg = "";
-let hdPreset = null; // { account, week }: set by the balance sheet's links, used by the next visit
+let hdPreset = null; // { account, day }: set by the balance sheet's links, used by the next visit
+let hdAllDays = false; // the daily table: every day, not only the latest ones
 const HD_KINDS = { security: "证券", cash: "现金" };
 
-// Weeks are named by their Monday, "2026-11-09"
-const hdDate = w => new Date(+w.slice(0, 4), +w.slice(5, 7) - 1, +w.slice(8, 10));
-const hdShift = (w, days) => { const d = hdDate(w); d.setDate(d.getDate() + days); return ymd(d); };
-const hdWeekLabel = w => {
-  const a = hdDate(w), b = hdDate(hdShift(w, 6));
-  return `${a.getFullYear()}/${pad(a.getMonth() + 1)}/${pad(a.getDate())} – ${pad(b.getMonth() + 1)}/${pad(b.getDate())}`;
-};
-const hdShort = w => `${+w.slice(5, 7)}/${+w.slice(8, 10)}`;
+// Days are "2026-11-14"
+const hdDate = d => new Date(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10));
+const hdShift = (d, days) => { const x = hdDate(d); x.setDate(x.getDate() + days); return ymd(x); };
+const HD_WEEKDAYS = "日一二三四五六";
+const hdLabel = d => `${d.replace(/-/g, "/")}（周${HD_WEEKDAYS[hdDate(d).getDay()]}）`;
+const hdShort = d => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;
 const fmtQty = n => n.toLocaleString("en-US", { maximumFractionDigits: 6 });
 const fmtRatio = r => (r > 0 ? "+" : "") + (r * 100).toFixed(2) + "%";
 const hdSigned = n => (n > 0 ? "+" : "") + fmtAmount(n);
 // "" and anything not a number: NaN
 const hdNum = t => { const s = String(t ?? "").replace(/[,\s]/g, ""); return s === "" ? NaN : Number(s); };
 
-async function loadHoldings(accountId = hd?.account ?? (+load("tx.holdings.account") || null), week = hd?.week) {
+async function loadHoldings(accountId = hd?.account ?? (+load("tx.holdings.account") || null), day = hd?.day) {
   const q = new URLSearchParams();
   if (accountId != null) q.set("account_id", accountId);
-  if (week) q.set("week", week);
+  if (day) q.set("day", day);
   try {
     hd = await api("/api/holdings?" + q);
   } catch (e) {
-    if (accountId != null) return loadHoldings(null, week); // that account is gone or no longer 投资
+    if (accountId != null) return loadHoldings(null, day); // that account is gone or no longer 投资
     return flash("hd-status", "读取失败：" + e.message);
   }
   flash("hd-status", hdPriceMsg);
@@ -41,7 +42,7 @@ async function loadHoldings(accountId = hd?.account ?? (+load("tx.holdings.accou
   renderHoldings();
   if (hd.account != null && !hdEdit && !hdSynced.has(hd.account)) hdSync(hd.account);
 }
-// Ended weeks' closes, the snapshot carried into the weeks since, stale live prices (server side)
+// The daily prices and rates the account needs, unless fetched lately (server side)
 async function hdSync(account) {
   hdSynced.add(account);
   hdPriceMsg = "";
@@ -69,16 +70,18 @@ $("hd-refresh").onclick = async () => {
   }
   await loadHoldings();
 };
-// Switching account or week while editing: asked first
-function hdGo(accountId, week) {
+// Switching account or day while editing: asked first
+function hdGo(accountId, day) {
   if (!leaveHdEdit()) return renderHoldings(); // puts the selects back
-  loadHoldings(accountId, week);
+  loadHoldings(accountId, day > hd.today ? hd.today : day);
 }
-$("hd-account").addEventListener("change", e => hdGo(+e.target.value, hd.week));
-$("hd-prev").onclick = () => hdGo(hd.account, hdShift(hd.week, -7));
-$("hd-next").onclick = () => hdGo(hd.account, hdShift(hd.week, 7));
-$("hd-today").onclick = () => hdGo(hd.account, hd.this_week);
-$("hd-history").addEventListener("click", e => { const tr = e.target.closest("tr[data-week]"); if (tr) hdGo(hd.account, tr.dataset.week); });
+$("hd-account").addEventListener("change", e => hdGo(+e.target.value, hd.day));
+$("hd-prev").onclick = () => hdGo(hd.account, hdShift(hd.day, -1));
+$("hd-next").onclick = () => hdGo(hd.account, hdShift(hd.day, 1));
+$("hd-today").onclick = () => hdGo(hd.account, hd.today);
+$("hd-day").addEventListener("change", e => { if (e.target.value) hdGo(hd.account, e.target.value); });
+$("hd-history").addEventListener("click", e => { const tr = e.target.closest("tr[data-day]"); if (tr) hdGo(hd.account, tr.dataset.day); });
+$("hd-history-more").onclick = () => { hdAllDays = !hdAllDays; renderHdHistory(); };
 
 const hdAccount = () => hd.accounts.find(a => a.id === hd.account);
 function renderHoldings() {
@@ -87,11 +90,12 @@ function renderHoldings() {
     ? `<div class="warn-box">还没有投资账户。去「<a href="#settings">设置 › 账户</a>」点「修改」，把账户的类型设为「投资」。</div>` : "";
   for (const id of ["hd-tiles", "hd-card", "hd-history-card"]) $(id).hidden = none;
   $("hd-account").innerHTML = hd.accounts.map(a => `<option value="${a.id}" ${a.id === hd.account ? "selected" : ""}>${esc(a.name)}</option>`).join("");
-  $("hd-week").textContent = hdWeekLabel(hd.week);
-  $("hd-next").disabled = hd.week >= hd.this_week;
-  $("hd-today").disabled = hd.week === hd.this_week;
-  $("hd-refresh").hidden = none || hd.week !== hd.this_week;
-  $("hd-refresh").disabled = !!hdEdit || !hd.rows.some(r => r.symbol && r.price_source === "live");
+  $("hd-day").value = hd.day;
+  $("hd-day").max = hd.today;
+  $("hd-next").disabled = hd.day >= hd.today;
+  $("hd-today").disabled = hd.day === hd.today;
+  $("hd-refresh").hidden = none || !hd.changes.length;
+  $("hd-refresh").disabled = !!hdEdit;
   if (none) return;
   renderHdTiles();
   renderHdRows();
@@ -111,9 +115,10 @@ function renderHdTiles() {
     `${ratio == null ? "" : `（<span class="${amtClass(ratio)}">${fmtRatio(ratio)}</span>）`}</span>${extra}</div>`;
   const uncosted = v.uncosted ? `<span class="muted">${v.uncosted} 个证券没填成本价，不算在内</span>` : "";
   $("hd-tiles").innerHTML = notes + `<div class="hero">
-    <div class="label">市值 · ${hdWeekLabel(hd.week)}${hd.filled ? "" : "（这周还没填）"}</div>
+    <div class="label">市值 · ${hdLabel(hd.day)}${!hd.snapshot ? "（这天之前还没填过持仓）"
+      : hd.snapshot === hd.day ? "（这天有变动）" : `（用 ${hdShort(hd.snapshot)} 填的持仓）`}</div>
     <div class="row"><span class="total">${money(v.market_value)}</span></div>
-    <div class="split gains">${part("较结余", v.cost, v.gain, v.ratio, `<span class="muted">成本 = 结余页这周周日的余额，市值含现金</span>`)}
+    <div class="split gains">${part("较结余", v.cost, v.gain, v.ratio, `<span class="muted">成本 = 结余页这天结束时的余额，市值含现金</span>`)}
       ${part("持仓盈亏", v.position_cost, v.position_gain, v.position_ratio, uncosted || `<span class="muted">按各证券的成本价，不含现金</span>`)}</div>
   </div>`;
 }
@@ -204,8 +209,10 @@ function hdEditCell(key, r, i, curSel) {
       : inp("code")}</td>`;
     case "currency": return `<td>${curSel(r.currency, `data-hd="${i}" data-k="currency"`)}</td>`;
     case "quantity": return sec ? `<td class="num">${inp("quantity", bad("quantity"))}</td>` : none;
-    case "price": return sec ? `<td class="num">${inp("price", r.lookup && !r.symbol && r.price.trim() === "" ? "" : bad("price"))}` +
-      `${r.symbol ? `<span class="price-note">${hdEditPriceNote(r, i)}</span>` : ""}</td>` : none;
+    // With a symbol the price comes from Yahoo Finance; without one it is typed in
+    case "price": return !sec ? none : r.symbol
+      ? `<td class="num">${r.price === "" ? "—" : fmtQty(hdNum(r.price))}<span class="price-note">自动 · ${hdPriceNote(r)}</span></td>`
+      : `<td class="num">${inp("price", r.lookup && r.price.trim() === "" ? "" : bad("price"))}</td>`;
     case "unit_cost": return sec ? `<td class="num">${inp("unit_cost", String(r.unit_cost).trim() !== "" && !(hdNum(r.unit_cost) >= 0) ? "invalid" : "")}</td>` : none;
     case "amount": {
       if (!sec) return `<td class="num">${inp("amount", bad("amount"))}</td>`;
@@ -218,14 +225,11 @@ function hdEditCell(key, r, i, curSel) {
 // Under a price: where it came from
 const hdPriceNote = r => {
   if (r.price_source === "manual") return "手填";
-  if (!r.price_at) return "还没取到";
+  if (r.price_source === "saved" || !r.price_at) return "还没取到，用填的价格";
   if (r.price_source === "close") return `${+r.price_at.slice(5, 7)}/${+r.price_at.slice(8, 10)} 收盘`;
   const d = new Date(r.price_at);
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())} 最新`;
 };
-const hdEditPriceNote = (r, i) => r.price_source === "manual"
-  ? `手填 · <button class="hd-link" data-hd-auto="${i}" title="从 Yahoo Finance 取这周的价格">改回自动</button>`
-  : "自动 · " + hdPriceNote(r);
 const HD_SEARCH_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2">` +
   `<circle cx="7" cy="7" r="5"/><path d="m11 11 3.5 3.5" stroke-linecap="round"/></svg>`;
 
@@ -270,15 +274,13 @@ function renderHdRows() {
   if (!hdEdit) {
     $("hd-rows").innerHTML = hdViewOrder().map(i => `<tr>` +
       cols.map(c => hdViewCell(c.key, hd.rows[i], v.rows[i])).join("") + `</tr>`).join("") ||
-      `<tr><td colspan="${cols.length}" class="empty">这周还没填。${hd.copy_from
-      ? `最近一次是 ${hdWeekLabel(hd.copy_from.week)} 那周，点「修改」会从那周的持仓开始填`
-      : "点「修改」开始填"}</td></tr>`;
+      `<tr><td colspan="${cols.length}" class="empty">这天之前还没填过持仓。点「修改」从这天开始填</td></tr>`;
     $("hd-add").hidden = true;
     return;
   }
   $("hd-rows").innerHTML = hdEdit.rows.map((r, i) => `<tr>` + cols.map(c => hdEditCell(c.key, r, i, curSel)).join("") +
       `<td><button class="icon" data-hd-del="${i}" title="删掉这一行">✕</button></td></tr>`).join("") ||
-    `<tr><td colspan="${cols.length + 1}" class="empty">没有持仓。用下面的按钮加一行；保存空的持仓会删掉这周的记录</td></tr>`;
+    `<tr><td colspan="${cols.length + 1}" class="empty">没有持仓。用下面的按钮加一行；全卖掉了可以留一行金额为 0 的现金</td></tr>`;
   $("hd-add").hidden = false;
 }
 $("hd-head").addEventListener("click", e => {
@@ -302,17 +304,91 @@ $("hd-cols").addEventListener("click", e => {
   $("hd-cols").querySelector(`[data-hd-move="${+b.dataset.hdMove + +(b.dataset.by ?? 0)}"][data-by="${b.dataset.by}"]`)?.focus();
 });
 
+// ---------- every day ----------
+const HD_SHOWN_DAYS = 31;
 function renderHdHistory() {
-  const cur = esc(hd.valuation.currency ?? "");
-  $("hd-history").innerHTML = hd.history.map(h => `<tr data-week="${h.week}" class="clickable ${h.week === hd.week ? "current" : ""}">
-    <td>${hdWeekLabel(h.week)}</td>${moneyCell(h.market_value, "缺汇率")}${moneyCell(h.cost, "—")}` +
-    `<td class="num ${h.gain == null ? "" : amtClass(h.gain)}">${h.gain == null ? "—" : hdSigned(h.gain)}</td>` +
-    `<td class="num ${h.ratio == null ? "" : amtClass(h.ratio)}">${h.ratio == null ? "—" : fmtRatio(h.ratio)}</td>` +
-    `<td class="num ${h.position_gain == null ? "" : amtClass(h.position_gain)}">${h.position_gain == null ? "—" : hdSigned(h.position_gain)}</td>` +
-    `<td class="num ${h.position_ratio == null ? "" : amtClass(h.position_ratio)}">${h.position_ratio == null ? "—" : fmtRatio(h.position_ratio)}</td></tr>`).join("") ||
-    `<tr><td colspan="7" class="empty">还没有记录</td></tr>`;
-  $("hd-history-cur").textContent = cur ? `（${hd.valuation.currency}）` : "";
+  const cur = hd.valuation.currency ?? "";
+  $("hd-history-cur").textContent = cur ? `（${cur}）` : "";
+  renderHdChart();
+  const prev = i => i ? hd.series[i - 1].market_value : null;
+  const days = hd.series.map((s, i) => ({ ...s, delta: s.market_value != null && prev(i) != null
+    ? Math.round((s.market_value - prev(i)) * 100) / 100 : null })).reverse();
+  const shown = hdAllDays ? days : days.slice(0, HD_SHOWN_DAYS);
+  const signed = x => `<td class="num ${x == null ? "" : amtClass(x)}">${x == null ? "—" : hdSigned(x)}</td>`;
+  const ratio = x => `<td class="num ${x == null ? "" : amtClass(x)}">${x == null ? "—" : fmtRatio(x)}</td>`;
+  $("hd-history").innerHTML = shown.map(h => `<tr data-day="${h.day}" class="clickable ${h.day === hd.day ? "current" : ""}">
+    <td>${hdLabel(h.day)}${h.change ? `<span class="count">变动</span>` : ""}</td>${moneyCell(h.market_value, "缺汇率")}${signed(h.delta)}` +
+    `${moneyCell(h.cost, "—")}${signed(h.gain)}${ratio(h.ratio)}${signed(h.position_gain)}${ratio(h.position_ratio)}</tr>`).join("") ||
+    `<tr><td colspan="8" class="empty">还没有记录</td></tr>`;
+  const more = $("hd-history-more");
+  more.hidden = days.length <= HD_SHOWN_DAYS;
+  more.textContent = hdAllDays ? `只看最近 ${HD_SHOWN_DAYS} 天` : `显示全部 ${days.length} 天`;
 }
+
+// Market value and cost (the balance) by day: one axis (both in the account's currency), a legend,
+// a crosshair with both values, ticks under the days with a change; a click opens that day.
+const HD_SERIES = [{ key: "market_value", label: "市值", color: "#2a78d6" }, { key: "cost", label: "成本（结余）", color: "#eb6834" }];
+function renderHdChart() {
+  const box = $("hd-chart"), pts = hd.series;
+  const vals = pts.flatMap(p => HD_SERIES.map(s => p[s.key])).filter(v => v != null);
+  if (pts.length < 2 || !vals.length) { box.innerHTML = ""; return; }
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (lo === hi) { lo -= Math.abs(lo) * 0.05 || 1; hi += Math.abs(hi) * 0.05 || 1; }
+  const margin = (hi - lo) * 0.08;
+  lo -= margin; hi += margin;
+  // Drawn at the box's own width (not scaled), the left margin as wide as the longest axis label
+  const ticks = [0, 1, 2, 3].map(k => lo + (hi - lo) * (k + 0.5) / 4);
+  const tickText = v => Math.round(v).toLocaleString("en-US");
+  const W = Math.max(300, box.clientWidth || 720), H = 180, R = 12, T = 12, B = 26, n = pts.length - 1;
+  const L = 12 + 7 * Math.max(...ticks.map(v => tickText(v).length));
+  const x = i => L + (W - L - R) * i / n, y = v => T + (H - T - B) * (hi - v) / (hi - lo);
+  // A line breaks where a value is missing
+  const path = key => pts.map((p, i) => p[key] == null ? "" :
+    `${i && pts[i - 1][key] != null ? "L" : "M"}${x(i).toFixed(1)},${y(p[key]).toFixed(1)}`).join("");
+  const xTicks = [...new Set([0, Math.round(n / 2), n])];
+  box.innerHTML = `<div class="hd-legend">${HD_SERIES.map(s => `<span><i style="background:${s.color}"></i>${s.label}</span>`).join("")}` +
+    `<span><i class="tick"></i>持仓变动</span></div>` +
+    `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="每天的市值和成本">` +
+    ticks.map(v => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>` +
+      `<text class="axis" x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${tickText(v)}</text>`).join("") +
+    xTicks.map(i => `<text class="axis" x="${x(i)}" y="${H - 6}" text-anchor="${i === 0 ? "start" : i === n ? "end" : "middle"}">${hdShort(pts[i].day)}</text>`).join("") +
+    pts.map((p, i) => p.change ? `<line class="change" x1="${x(i)}" x2="${x(i)}" y1="${H - B}" y2="${H - B + 5}"/>` : "").join("") +
+    HD_SERIES.map(s => `<path d="${path(s.key)}" stroke="${s.color}" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`).join("") +
+    `<g class="cross" visibility="hidden"><line class="cross-line" y1="${T}" y2="${H - B}"/>` +
+    HD_SERIES.map(s => `<circle r="4" fill="${s.color}" stroke="#fff" stroke-width="2" data-k="${s.key}"/>`).join("") + `</g>` +
+    `<rect x="${L}" y="0" width="${W - L - R}" height="${H}" fill="transparent"/></svg>` +
+    `<div class="hd-tip" hidden></div>`;
+  const svg = box.querySelector("svg"), cross = svg.querySelector(".cross"), tip = box.querySelector(".hd-tip");
+  const at = e => {
+    const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) * W / r.width;
+    return Math.max(0, Math.min(n, Math.round((px - L) / (W - L - R) * n)));
+  };
+  svg.onpointermove = e => {
+    const i = at(e), p = pts[i], cx = x(i), line = cross.querySelector("line");
+    cross.setAttribute("visibility", "visible");
+    line.setAttribute("x1", cx);
+    line.setAttribute("x2", cx);
+    for (const c of cross.querySelectorAll("circle")) {
+      const v = p[c.dataset.k];
+      c.setAttribute("visibility", v == null ? "hidden" : "inherit");
+      if (v != null) { c.setAttribute("cx", cx); c.setAttribute("cy", y(v)); }
+    }
+    tip.hidden = false;
+    tip.innerHTML = `<b>${hdLabel(p.day)}${p.change ? " · 变动" : ""}</b>` + HD_SERIES.map(s =>
+      `<div><i style="background:${s.color}"></i>${s.label} ${p[s.key] == null ? "—" : fmtAmount(p[s.key])}</div>`).join("") +
+      (p.gain == null ? "" : `<div>较结余 <span class="${amtClass(p.gain)}">${hdSigned(p.gain)}</span></div>`);
+    const r = svg.getBoundingClientRect(), left = cx * r.width / W;
+    tip.style.left = `${Math.max(0, Math.min(left + 12, r.width - tip.offsetWidth - 4))}px`;
+  };
+  svg.onpointerleave = () => { cross.setAttribute("visibility", "hidden"); tip.hidden = true; };
+  svg.onclick = e => hdGo(hd.account, pts[at(e)].day);
+}
+// Drawn at the page's width: again when the window is resized
+let hdChartTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(hdChartTimer);
+  hdChartTimer = setTimeout(() => { if (hd && !$("view-holdings").hidden) renderHdChart(); }, 150);
+});
 
 // ---------- editing ----------
 const hdText = v => v == null ? "" : String(v);
@@ -320,7 +396,7 @@ const hdRowText = r => ({ kind: r.kind, name: r.name ?? "", code: r.code ?? "", 
                           quantity: hdText(r.quantity), price: hdText(r.price), unit_cost: hdText(r.unit_cost),
                           amount: hdText(r.amount), symbol: r.symbol ?? "", price_source: r.price_source ?? "manual",
                           price_at: r.price_at ?? "", lookup: false });
-// The week as typed, checked: [{...row with numbers}]; throws on a row that can't be saved.
+// The table as typed, checked: [{...row with numbers}]; throws on a row that can't be saved.
 // Not `final`: a new security still to be looked up may leave its price empty.
 function hdClean(final = false) {
   return hdEdit.rows.map((r, i) => {
@@ -334,8 +410,7 @@ function hdClean(final = false) {
       const unit_cost = r.unit_cost.trim() === "" ? null : hdNum(r.unit_cost);
       if (unit_cost !== null && !(unit_cost >= 0)) throw new Error(`${where}：成本价要是不小于 0 的数字（也可以不填）`);
       return { kind: r.kind, name: r.name.trim(), code: r.code.trim(), currency: r.currency, quantity,
-               price: later ? null : price, unit_cost, symbol: r.symbol,
-               price_source: r.symbol ? r.price_source : "manual", price_at: r.symbol && r.price_at || null };
+               price: later ? null : price, unit_cost, symbol: r.symbol };
     }
     const amount = hdNum(r.amount);
     if (Number.isNaN(amount)) throw new Error(`${where}：金额要是数字`);
@@ -345,11 +420,11 @@ function hdClean(final = false) {
 const hdSame = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const hdSaved = () => hd.rows.map(r => r.kind === "security"
   ? { kind: r.kind, name: r.name, code: r.code, currency: r.currency, quantity: r.quantity, price: r.price, unit_cost: r.unit_cost,
-      symbol: r.symbol, price_source: r.price_source, price_at: r.price_at }
+      symbol: r.symbol }
   : { kind: r.kind, name: r.name, code: r.code, currency: r.currency, amount: r.amount });
 const hdRowLine = r => r.kind === "security"
   ? `证券 ${[r.name, r.code].filter(Boolean).join(" ")}：${fmtQty(r.quantity)} × ${r.price == null ? "（查行情）" : fmtQty(r.price)} ${r.currency}` +
-    (r.symbol ? `（${r.symbol}，${r.price_source === "manual" ? "手填" : "自动"}）` : "") +
+    (r.symbol ? `（${r.symbol}，自动取价）` : "（手填价格）") +
     (r.unit_cost == null ? "，没填成本价" : `，成本价 ${fmtQty(r.unit_cost)}`)
   : `现金${r.name ? " " + r.name : ""}：${fmtAmount(r.amount)} ${r.currency}`;
 // The edits as lines for the confirm; throws on something that can't be saved
@@ -357,8 +432,10 @@ function hdChanges(final = false) {
   const rows = hdClean(final), out = [];
   if (hdEdit.currency !== hd.valuation.currency) out.push(`市值改按${hdEdit.currency}计算（原来是${hd.valuation.currency ?? "—"}）`);
   if (!hdSame(rows, hdSaved())) {
-    if (!rows.length) out.push(`删掉 ${hdWeekLabel(hd.week)} 这周的持仓`);
-    else out.push(`${hdWeekLabel(hd.week)} 这周的持仓（${rows.length} 行）：\n` + rows.map(r => "    " + hdRowLine(r)).join("\n"));
+    if (!rows.length) throw new Error("至少要有一行；全卖掉了可以留一行金额为 0 的现金");
+    out.push(`${hdLabel(hd.day)} 起的持仓（${rows.length} 行）` +
+      (hd.snapshot && hd.snapshot !== hd.day ? `，${hdShort(hd.snapshot)} 填的那份用到前一天为止` : "") +
+      "：\n" + rows.map(r => "    " + hdRowLine(r)).join("\n"));
   }
   return out;
 }
@@ -369,13 +446,14 @@ function renderHdLock() {
   const msg = hdLockMsg ? `<span class="lock-msg">${esc(hdLockMsg)}</span>` : "";
   if (!hdEdit) {
     bar.className = "lockbar";
-    bar.innerHTML = `<span class="lock-state">🔒 只读</span>${msg || `<span class="muted">要填这周的持仓先点「修改」，改完统一保存</span>`}` +
+    bar.innerHTML = `<span class="lock-state">🔒 只读</span>${msg || `<span class="muted">持仓有变动时，选好那天点「修改」，改完统一保存</span>`}` +
+      (hd.snapshot && hd.snapshot === hd.day ? `<button class="secondary" data-lock="delete" title="之前的持仓会一直用到下一次变动">删除这天的变动</button>` : "") +
       `<button data-lock="edit">✎ 修改</button>`;
     return;
   }
   let n = 0, problem = "";
   try { n = hdChanges().length; } catch (e) { problem = e.message; }
-  const copied = hdEdit.copied ? `从 ${hdWeekLabel(hdEdit.copied)} 那周复制的，记得改成这周的现价` : "";
+  const copied = hdEdit.copied ? `从 ${hdShort(hdEdit.copied)} 填的持仓开始改，保存后从 ${hdShort(hd.day)} 起是新的一份` : "";
   bar.className = "lockbar editing";
   bar.innerHTML = `<span class="lock-state">✎ 正在修改</span>` +
     (problem ? `<span class="lock-msg warn">${esc(problem)}</span>` : msg ||
@@ -405,7 +483,8 @@ async function saveHdEdits() {
   if (!list.length) return;
   if (!confirm(`保存？\n\n${list.map(t => "· " + t).join("\n")}`)) return;
   $("hd-lock").querySelector('[data-lock="save"]').disabled = true;
-  const body = { account_id: hd.account, week: hd.week, rows: hdClean(true) };
+  const rows = hdClean(true), body = { account_id: hd.account, day: hd.day };
+  if (!hdSame(rows, hdSaved())) body.rows = rows; // left out: only the currency changes
   if (hdEdit.currency !== hd.valuation.currency) body.currency = hdEdit.currency;
   try {
     await api("/api/holdings", send("PUT", body));
@@ -415,7 +494,7 @@ async function saveHdEdits() {
   }
   hdEdit = null;
   hdLockMsg = "已保存";
-  hdSynced.delete(hd.account); // prices for what was copied or linked
+  hdSynced.delete(hd.account); // prices for what was added or linked
   await loadHoldings();
 }
 $("hd-lock").addEventListener("click", e => {
@@ -423,16 +502,24 @@ $("hd-lock").addEventListener("click", e => {
   if (!act) return;
   hdLockMsg = "";
   if (act === "edit") {
-    const from = hd.filled ? hd.rows : hd.copy_from?.rows ?? [];
-    const copied = !hd.filled && hd.copy_from ? hd.copy_from.week : null;
-    hdEdit = { currency: hd.valuation.currency ?? hd.currencies[0], copied, rows: from.map(hdRowText).map(r =>
-      // another week's price: fetched again for this one after saving
-      copied && r.symbol && r.price_source !== "manual" ? { ...r, price_source: "live", price_at: "" } : r) };
+    const copied = hd.snapshot && hd.snapshot !== hd.day ? hd.snapshot : null;
+    hdEdit = { currency: hd.valuation.currency ?? hd.currencies[0], copied, rows: hd.rows.map(hdRowText) };
     renderHoldings();
   }
+  if (act === "delete") deleteHdDay();
   if (act === "cancel") leaveHdEdit();
   if (act === "save") saveHdEdits();
 });
+async function deleteHdDay() {
+  const before = hd.changes.find(d => d < hd.day);
+  if (!confirm(`删除 ${hdLabel(hd.day)} 这天的持仓变动？\n` +
+    (before ? `之后会一直用 ${hdShort(before)} 填的持仓，直到下一次变动。` : "这是最早的一份，删除后这天之前就没有持仓了。"))) return;
+  try {
+    await api("/api/holdings?" + new URLSearchParams({ account_id: hd.account, day: hd.day }), { method: "DELETE" });
+    hdLockMsg = "已删除";
+  } catch (e) { hdLockMsg = "没有删除：" + e.message; }
+  await loadHoldings();
+}
 $("hd-add").addEventListener("click", e => {
   const kind = e.target.dataset.hdAdd;
   if (!kind || !hdEdit) return;
@@ -446,30 +533,21 @@ $("hd-add").addEventListener("click", e => {
 $("hd-rows").addEventListener("click", async e => {
   const b = e.target.closest("button");
   if (!b || !hdEdit) return;
-  const { hdDel, hdFind: find, hdUnlink, hdAuto } = b.dataset;
+  const { hdDel, hdFind: find, hdUnlink } = b.dataset;
   if (hdDel !== undefined) hdEdit.rows.splice(+hdDel, 1);
   else if (find !== undefined) {
     const r = hdEdit.rows[+find];
     if (!(r.code || r.name).trim()) { hdLockMsg = "先填代码或名称再查找"; return renderHdLock(); }
     if (!(await hdFind(+find))) return;
   } else if (hdUnlink !== undefined) Object.assign(hdEdit.rows[+hdUnlink], { symbol: "", price_source: "manual", price_at: "" });
-  else if (hdAuto !== undefined) {
-    const r = hdEdit.rows[+hdAuto];
-    b.disabled = true;
-    try {
-      const c = (await hdLookup(r.symbol)).find(c => c.symbol === r.symbol);
-      if (!c) throw new Error(`Yahoo Finance 没有 ${r.symbol} 这周的价格`);
-      Object.assign(r, { price: String(c.price), price_source: c.source, price_at: c.at });
-      hdLockMsg = "";
-    } catch (err) { hdLockMsg = err.message; }
-  } else return;
+  else return;
   hdEdit.copied = null;
   renderHdRows();
   renderHdLock();
 });
 
 // ---------- looking a code up (Yahoo Finance) ----------
-const hdLookup = code => api("/api/holdings/lookup?" + new URLSearchParams({ code, week: hd.week })).then(r => r.candidates);
+const hdLookup = code => api("/api/holdings/lookup?" + new URLSearchParams({ code, day: hd.day })).then(r => r.candidates);
 // The dialog for row i: resolves "picked", "manual" (none of these: price typed in) or null (cancelled)
 function hdFind(i, saving = false) {
   const r = hdEdit.rows[i], q = (r.code || r.name).trim(), dlg = $("hd-find");
@@ -504,7 +582,7 @@ function hdFind(i, saving = false) {
       if (!dlg.open) return;
       found = list;
       $("hd-find-msg").textContent = list.length
-        ? (hd.week === hd.this_week ? "价格是最新价。" : `价格是 ${hdWeekLabel(hd.week)} 那周最后一个交易日的收盘价。`) + "选对的那一个；名称保留你填的。"
+        ? (hd.day === hd.today ? "价格是最新价。" : `价格是 ${hdShort(hd.day)}（或之前最后一个交易日）的收盘价。`) + "选对的那一个；名称保留你填的。"
         : "Yahoo Finance 没找到。可以换个写法再查：东京 7203.T、港股 0700.HK、上海 600519.SS、深圳 000858.SZ；名称要用英文（Tencent），中文名查不到。也可以手填价格。";
       $("hd-find-rows").innerHTML = list.map((c, k) => {
         const cur = c.currency_name ?? `${c.currency ?? "?"}（清单里没有）`;
@@ -522,11 +600,6 @@ $("hd-rows").addEventListener("input", e => {
   if (i === undefined || !hdEdit) return;
   const r = hdEdit.rows[+i];
   r[k] = e.target.value;
-  if (k === "price" && r.symbol && r.price_source !== "manual") { // typed over: kept as typed from now on
-    Object.assign(r, { price_source: "manual", price_at: "" });
-    const note = e.target.closest("td").querySelector(".price-note");
-    if (note) note.innerHTML = hdEditPriceNote(r, +i);
-  }
   if (["quantity", "price", "amount"].includes(k)) e.target.classList.toggle("invalid", Number.isNaN(hdNum(r[k])));
   if (k === "unit_cost") e.target.classList.toggle("invalid", r[k].trim() !== "" && !(hdNum(r[k]) >= 0));
   if (r.kind === "security") {

@@ -25,8 +25,8 @@ txreader/db.py            表结构、旧库升级（`_migrate`）、账户 / �
 txreader/store.py         识别入库、待核对行、确认入库、手动输入、交易修改、导出 CSV
 txreader/lists.py         账户 / 币种 / 种类清单：提示、新名称、设置页的批量改动（`apply`）、不能删的原因
 txreader/books.py         期初余额、月汇率、账户结余（`balances`）、月度收支（`monthly`）、每月对比（`trend`）
-txreader/portfolio.py     投资账户每周的持仓、市值、盈亏；自动取价格（`sync` / `refresh` / `lookup`）
-txreader/quotes.py        Yahoo Finance 公开接口：搜索、最新价、收盘价
+txreader/portfolio.py     投资账户按天的持仓（变动时填）、每天的市值、盈亏；自动取每日价格和汇率（`sync` / `refresh` / `lookup`）
+txreader/quotes.py        Yahoo Finance 公开接口：搜索、最新价、收盘价、一段日线（`daily`）
 txreader/fx.py            月汇率从 Yahoo Finance 自动取（`sync` / `refresh`）：过去的月份取月底收盘价，本月取最新价
 txreader/mail.py          邮件导入：Outlook OAuth、邮件规则、读取、识别
 txreader/auth.py          单用户密码登录、会话、登录记录、锁定；`python -m txreader.auth` 生成密码哈希
@@ -45,7 +45,7 @@ tests/test_samples.py     samples/ 里的真实截图对照期望结果（没有
 tests/test_docs.py        检查每个文件都写进了 CLAUDE.md 的结构
 ```
 
-测试不联网：持仓价格、月汇率的测试替换掉 `quotes.latest` / `quotes.closes` / `quotes.search`。
+测试不联网：持仓价格、月汇率的测试替换掉 `quotes.latest` / `quotes.closes` / `quotes.daily` / `quotes.search`。
 
 ## 数据流
 

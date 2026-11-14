@@ -20,7 +20,7 @@ js/transactions.js  交易页：周期栏 + 高级筛选、导出 CSV、上锁 /
 js/monthly.js       收支 › 本月
 js/trend.js         收支页的标签切换、收支 › 每月对比
 js/balances.js      结余页
-js/holdings.js      持仓页：按周切换、上锁 / 统一保存（hdEdit）、取价格（hdSync / hdFind）、列顺序和排序（localStorage）
+js/holdings.js      持仓页：按日期切换、上锁 / 统一保存（hdEdit）、删除某天的变动、取价格（hdSync / hdFind）、列顺序和排序（localStorage）、每日曲线和每日表
 js/security.js      登录记录
 js/settings.js      设置页标签、上锁 / 统一保存（lockable）、账户 / 币种 / 种类清单（拖动排序）
 js/opening.js       设置 › 期初余额

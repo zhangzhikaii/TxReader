@@ -34,7 +34,7 @@ function route() {
     loadBalances($("bal-month").value || null);
     fxSyncFor("balances", () => loadBalances(bal?.month ?? null));
   }
-  if (view === "holdings") { hdSynced.clear(); const p = hdPreset; hdPreset = null; p ? loadHoldings(p.account, p.week) : loadHoldings(); }
+  if (view === "holdings") { hdSynced.clear(); const p = hdPreset; hdPreset = null; p ? loadHoldings(p.account, p.day) : loadHoldings(); }
   if (view === "monthly") {
     loadMonthlyPage();
     // not loadMonthlyPage again: that would reset the comparison's categories
