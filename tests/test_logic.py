@@ -137,3 +137,19 @@ def test_build_records_tells_where_each_row_came_from():
     b = Tx(month=10, day=2, amount=-2.0, merchant="b", year=2026)
     rows = build_records([[b, a], [a]], 2026)  # second screenshot only repeats `a`
     assert [(r["merchant"], r["img"], r["img_pos"]) for r in rows] == [("a", 0, 1), ("b", 0, 0)]
+
+
+def test_quotes_each_runs_side_by_side():
+    import threading
+    from txreader import quotes
+    barrier = threading.Barrier(3, timeout=2)  # breaks unless all three calls are in flight at once
+
+    def fn(s):
+        barrier.wait()
+        if s == "BAD":
+            raise quotes.QuoteError("连不上")
+        return s.lower()
+    out = quotes.each(fn, ["A", "BAD", "C"])
+    assert [s for s, _ in out] == ["A", "BAD", "C"]
+    assert out[0][1] == "a" and out[2][1] == "c"
+    assert isinstance(out[1][1], quotes.QuoteError)

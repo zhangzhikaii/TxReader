@@ -9,6 +9,7 @@
   overwritten; clearing it lets the next sync fetch it.
 - Months are the rate table's (books._all_months), up to this month. Nothing runs in the
   background: `sync` is called when the rates tab, 结余 or 收支 is opened, `refresh` by 「更新汇率」.
+  All the currencies' calls run side by side (quotes.each).
 """
 from datetime import date, datetime, timedelta, timezone
 
@@ -47,19 +48,26 @@ def sync(today: date | None = None, force: bool = False) -> dict:
         have = {(r[0], r[1]): (r[2], r[3]) for r in conn.execute("SELECT month, currency_id, source, rate_at FROM fx_rates")}
     cutoff = (_now() - STALE).isoformat(timespec="minutes")
     got = {}  # (month, currency id) -> (rate, source, at)
+    plan = []  # (currency, symbol, label, ended months, live?)
     for c in coded:
         if c["code"] == base["code"]:
             continue
-        symbol, label = quotes.fx_symbol(c["code"], base["code"]), f"{c['name']}（{c['code']}）"
         ended = [m for m in months if m < this and have.get((m, c["id"]), ("live",))[0] == "live"]
         live = this in months and (
             (row := have.get((this, c["id"]))) is None
             or (row[0] == "live" and (force or (row[1] or "") < cutoff)))
+        plan.append((c, quotes.fx_symbol(c["code"], base["code"]), f"{c['name']}（{c['code']}）", ended, live))
+    # all the calls side by side, then the results in the currencies' order
+    jobs = [("close", p[1], tuple(month_end(m) for m in p[3])) for p in plan if p[3]]
+    jobs += [("live", p[1], ()) for p in plan if p[4]]
+    fetched = dict(quotes.each(
+        lambda j: quotes.closes(j[1], list(j[2]), digits=None) if j[0] == "close" else quotes.latest(j[1], digits=None),
+        jobs))
+    for c, symbol, label, ended, live in plan:
         if ended:
-            try:
-                res = quotes.closes(symbol, [month_end(m) for m in ended], digits=None)
-            except quotes.QuoteError as e:
-                warnings.append(f"{label}：{e}")
+            res = fetched["close", symbol, tuple(month_end(m) for m in ended)]
+            if isinstance(res, quotes.QuoteError):
+                warnings.append(f"{label}：{res}")
             else:
                 if res["closes"] and res["currency"] != base["code"]:
                     warnings.append(f"{label}：Yahoo Finance 给的是 {res['currency']}，不是 {base['code']}")
@@ -72,10 +80,9 @@ def sync(today: date | None = None, force: bool = False) -> dict:
                 if missing:
                     warnings.append(f"{label}：Yahoo Finance 没有 {'、'.join(missing)} 的收盘价（代码 {symbol}）")
         if live:
-            try:
-                q = quotes.latest(symbol, digits=None)
-            except quotes.QuoteError as e:
-                warnings.append(f"{label}：{e}")
+            q = fetched["live", symbol, ()]
+            if isinstance(q, quotes.QuoteError):
+                warnings.append(f"{label}：{q}")
                 continue
             if not q:
                 warnings.append(f"{label}：Yahoo Finance 没有最新汇率（代码 {symbol}）")

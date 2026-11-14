@@ -19,6 +19,7 @@
   ("close") and is never fetched again. A price typed in ("manual") is never overwritten.
   `sync` does this when the page is opened, and carries the latest snapshot forward into the
   weeks since (quantities unchanged, prices fetched), so nothing has to be typed in each week.
+  The symbols are fetched side by side (quotes.each).
 
 Weeks run Monday to Sunday and are named by their Monday (2026-11-09).
 """
@@ -285,11 +286,10 @@ def _sunday(week: str) -> date:
 def _fetch_closes(symbols: set[str], weeks: set[str], warnings: list[str]) -> dict:
     """(symbol, week) -> (price, trading day) for the weeks' Sundays; failures go to warnings."""
     out = {}
-    for s in sorted(symbols):
-        try:
-            got = quotes.closes(s, [_sunday(w) for w in weeks])["closes"]
-        except quotes.QuoteError as e:
-            warnings.append(f"{s}：{e}")
+    sundays = [_sunday(w) for w in weeks]
+    for s, got in quotes.each(lambda s: quotes.closes(s, sundays)["closes"], sorted(symbols)):
+        if isinstance(got, quotes.QuoteError):
+            warnings.append(f"{s}：{got}")
             continue
         for w in weeks:
             if _sunday(w) in got:
@@ -302,11 +302,9 @@ def _fetch_closes(symbols: set[str], weeks: set[str], warnings: list[str]) -> di
 def _fetch_latest(symbols: set[str], warnings: list[str]) -> dict:
     """symbol -> (price, at)."""
     out = {}
-    for s in sorted(symbols):
-        try:
-            q = quotes.latest(s)
-        except quotes.QuoteError as e:
-            warnings.append(f"{s}：{e}")
+    for s, q in quotes.each(lambda s: quotes.latest(s), sorted(symbols)):
+        if isinstance(q, quotes.QuoteError):
+            warnings.append(f"{s}：{q}")
             continue
         if q:
             out[s] = (q["price"], q["at"] or _now().isoformat(timespec="minutes"))

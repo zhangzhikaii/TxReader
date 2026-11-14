@@ -8,6 +8,8 @@ Only a symbol or the code typed in goes out, never quantities or amounts, and on
 - `closes(symbol, days)`: for each day, the close of the last trading day on or before it
 - `price_for(symbol, week, this_week)`: this week -> latest; an ended week -> the close on its Sunday
 - `fx_symbol(code, base)`: the symbol of an exchange rate (JPY, CNY -> JPYCNY=X; see fx.py)
+- `each(fn, items)`: fn over items side by side (one call per symbol, so many symbols take as
+  long as the slowest one rather than all of them added up)
 
 Prices quoted in a currency's minor unit (GBp, ZAc, ILA) are turned into the major one.
 """
@@ -28,6 +30,20 @@ MINOR = {"GBp": ("GBP", 100), "GBX": ("GBP", 100), "ZAc": ("ZAR", 100), "ILA": (
 
 class QuoteError(Exception):
     """Yahoo Finance couldn't be reached or answered with an error."""
+
+
+def each(fn, items, workers: int = 8) -> list:
+    """[(item, fn(item) or the QuoteError it raised)] in the order of `items`; the calls run side by side."""
+    def one(item):
+        try:
+            return item, fn(item)
+        except QuoteError as e:
+            return item, e
+    items = list(items)
+    if len(items) <= 1:
+        return [one(i) for i in items]
+    with ThreadPoolExecutor(max_workers=min(workers, len(items))) as pool:
+        return list(pool.map(one, items))
 
 
 def _get(path: str, params: dict, tries: int = TRIES, timeout=TIMEOUT) -> dict | None:
